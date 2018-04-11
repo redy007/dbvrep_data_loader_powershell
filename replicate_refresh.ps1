@@ -92,14 +92,17 @@ if (!(Test-Path $adress\$prepare_tabs)) {
 }
 
 
-.\start-console.bat shutdown all
-
-Start-Sleep -Seconds 10
+# risk the second process is running
 if (Get-Service -Name $s.Name| Where-Object {$_.Status -eq "Running"}) {
-	Write-Host "Check the output from the log file for errors. You need to fix it before you can continue."
-	cmd /c pause | out-null
-	exit 1
-} 
+	.\start-console.bat shutdown all
+	
+	Start-Sleep -Seconds 10
+	if (Get-Service -Name $s.Name| Where-Object {$_.Status -eq "Running"}) {
+		Write-Host "Check the output from the log file for errors. You need to fix it before you can continue."
+		cmd /c pause | out-null
+		exit 1
+	} 
+}
 
 $vysledek=Get-ChildItem -Filter *batch.bat
 $v=$adress + $vysledek.Name
@@ -113,7 +116,6 @@ if ( $last_line.equals("pause")) {
 	Remove-Variable -Name LinesInFile
 }
 
-$target= .\start-console.bat show APPLY_REMOTE_INTERFACE| Select-String -Pattern ^APPLY
 
 $vysledek=Get-ChildItem -Filter *-all.bat
 $v=$adress + $vysledek.Name
@@ -128,11 +130,23 @@ if (Get-Content $allLog -Tail 1 |  Where-Object {$_ -match "Error encountered, n
 }
 
 
-$t= $target -split ' '
-$t_servername=$t[2] | %{$_.Substring(0, $_.length - 5) }
+if ($s.Name.split("_")[1].ToUpper() -eq "MINE") {
+	# it's the mine server where script is started
+	$target= .\start-console.bat show APPLY_REMOTE_INTERFACE| Select-String -Pattern ^APPLY
+	$t= $target -split ' '
+	$t_servername=$t[2] | %{$_.Substring(0, $_.length - 5) }
 
-(Get-Service -ComputerName $t_servername -Name $s.Name.Replace('MINE','APPLY')).start()
-(Get-Service -Name $s.Name).start()
+	(Get-Service -ComputerName $t_servername -Name $s.Name.Replace('MINE','APPLY')).start()
+	(Get-Service -Name $s.Name).start()
+} else {
+	# it's the apply server where script is started
+	$target= .\start-console.bat show MINE_REMOTE_INTERFACE| Select-String -Pattern ^MINE
+	$t= $target -split ' '
+	$t_servername=$t[2] | %{$_.Substring(0, $_.length - 5) }
+
+	(Get-Service -ComputerName $t_servername -Name $s.Name.Replace('APPLY','MINE')).start()
+	(Get-Service -Name $s.Name).start()
+}
 
 Write-Host
 Write-Host
