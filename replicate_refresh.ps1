@@ -35,11 +35,21 @@
   		msi.second_table
   		...
 
+  version 1.1
+
+  You can run the script from destionat server too. 
+
+  version 2.0
+  
+  In version 2.0 you can add new tables only to you replication. The tool still use
+  SSMA to inistatiate data. The prepare is default settings. To use refresh you need
+  to set parameter -refresh.
+
 
 .EXAMPLE
 RUN The script from MINE process:
-   . C:\Users\Administrator\Desktop\replicate_refresh.ps1 -rename_schema msi.dbo -sa_passwd sa -system_password oracle
-   . C:\Users\Administrator\Desktop\replicate_refresh.ps1 -rename_schema msi.dbo -sa_passwd sa -system_password oracle - prepare_tabs prepare_tabs.txt
+   . C:\Users\Administrator\Desktop\replicate_refresh.ps1 -rename_schema msi.dbo -sa_passwd sa -system_password oracle -refresh 
+   . C:\Users\Administrator\Desktop\replicate_refresh.ps1 -rename_schema msi.dbo -sa_passwd sa -system_password oracle -refresh -prepare_tabs prepare_tabs.txt
 
 
 #>
@@ -50,8 +60,95 @@ param (
     [string]$sa_passwd = $(Read-Host -asSecureString "Password for SQL Server connection [dbvrep variable APPLY.APPLY_USER (default SA user)]"),
     [string]$system_password = $( Read-Host -asSecureString "Input password for System user on the source database" ),
     [string]$prepare_tabs = "prepare_tabs.txt"
-#    [switch]$SaveData = $false
+    [switch]$refresh = $false
 )
+
+
+Start-Transcript
+
+function stopDbvrepServices    
+{  
+	# risk the second process is running
+	# user will find it out when all.bat script fail.
+	if (Get-Service -Name $s.Name| Where-Object {$_.Status -eq "Running"}) {
+		.\start-console.bat shutdown all
+		
+		Start-Sleep -Seconds 10
+		if (Get-Service -Name $s.Name| Where-Object {$_.Status -eq "Running"}) {
+			Write-Host "Check the output from the log file for errors. You need to fix it before you can continue."
+			cmd /c pause | out-null
+			exit 1
+		} 
+	}
+
+	$vysledek=Get-ChildItem -Filter *batch.bat
+	$v=$adress + $vysledek.Name
+	$last_line = Get-Content $v -Tail 1
+	if ( $last_line.equals("pause")) {
+		# Read all lines
+		$LinesInFile = [System.IO.File]::ReadAllLines($v)
+		# Write all lines, except for the last one, back to the file
+		[System.IO.File]::WriteAllLines($v,$LinesInFile[0..($LinesInFile.Count - 2)])
+		# Clean up
+		Remove-Variable -Name LinesInFile
+	}
+
+
+	$vysledek=Get-ChildItem -Filter *-all.bat
+	$v=$adress + $vysledek.Name
+	& $v
+
+	$allLog=Get-ChildItem -Filter *-all.log
+	if (Get-Content $allLog -Tail 1 |  Where-Object {$_ -match "Error encountered, not starting Dbvisit Replicate."}) { 
+		cat $allLog
+		Write-Host "Check the output from the log file for errors. Perhaps there is running process on background. Kill them and repeate the script"
+		cmd /c pause | out-null
+		exit 1
+	}
+
+
+	if ($s.Name.split("_")[1].ToUpper() -eq "MINE") {
+		# it's the mine server where script is started
+		$target= .\start-console.bat show APPLY_REMOTE_INTERFACE| Select-String -Pattern ^APPLY
+		$t= $target -split ' '
+		$t_servername=$t[2] | %{$_.Substring(0, $_.length - 5) }
+
+		(Get-Service -ComputerName $t_servername -Name $s.Name.Replace('MINE','APPLY')).start()
+		(Get-Service -Name $s.Name).start()
+	} else {
+		# it's the apply server where script is started
+		$target= .\start-console.bat show MINE_REMOTE_INTERFACE| Select-String -Pattern ^MINE
+		$t= $target -split ' '
+		$t_servername=$t[2] | %{$_.Substring(0, $_.length - 5) }
+
+		(Get-Service -ComputerName $t_servername -Name $s.Name.Replace('APPLY','MINE')).start()
+		(Get-Service -Name $s.Name).start()
+	}
+
+	Write-Host
+	Write-Host
+	Write-Host
+	Write-Host wait 2m for sync both processes
+	Start-Sleep -Seconds 120
+
+	$xPLOG=.\start-console.bat list status| Select-String -Pattern ^MINE
+	$MPLOG= $xPLOG -split ' '
+	$numCycle = 0;
+
+	Do {
+		Write-Host wait 1m for sync both processes
+		Start-Sleep -Seconds 60
+		$xPLOG=.\start-console.bat list status| Select-String -Pattern ^APPLY
+		$APLOG= $xPLOG -split ' '
+		$numCycle++
+		if ($numCycle.equals(5)) {
+			Write-Host "APPLY process stuck. Check apply log file or SQL Server for locks."
+		}
+
+	}
+	Until ($MPLOG[6] -le $APLOG[6])
+	Write-Host APPLY process is up to date.
+}
 
 $service=Get-Service -name DBvisit*
 foreach ( $x in $service) { Write-Host $service.indexof($x) ... $x.name.remove(0,16) ... $x.status}
@@ -91,87 +188,9 @@ if (!(Test-Path $adress\$prepare_tabs)) {
 	Remove-Variable -Name LinesInFile
 }
 
-
-# risk the second process is running
-if (Get-Service -Name $s.Name| Where-Object {$_.Status -eq "Running"}) {
-	.\start-console.bat shutdown all
-	
-	Start-Sleep -Seconds 10
-	if (Get-Service -Name $s.Name| Where-Object {$_.Status -eq "Running"}) {
-		Write-Host "Check the output from the log file for errors. You need to fix it before you can continue."
-		cmd /c pause | out-null
-		exit 1
-	} 
+if ($refresh) {
+	stopDbvrepServices()
 }
-
-$vysledek=Get-ChildItem -Filter *batch.bat
-$v=$adress + $vysledek.Name
-$last_line = Get-Content $v -Tail 1
-if ( $last_line.equals("pause")) {
-	# Read all lines
-	$LinesInFile = [System.IO.File]::ReadAllLines($v)
-	# Write all lines, except for the last one, back to the file
-	[System.IO.File]::WriteAllLines($v,$LinesInFile[0..($LinesInFile.Count - 2)])
-	# Clean up
-	Remove-Variable -Name LinesInFile
-}
-
-
-$vysledek=Get-ChildItem -Filter *-all.bat
-$v=$adress + $vysledek.Name
-& $v
-
-$allLog=Get-ChildItem -Filter *-all.log
-if (Get-Content $allLog -Tail 1 |  Where-Object {$_ -match "Error encountered, not starting Dbvisit Replicate."}) { 
-	cat $allLog
-	Write-Host "Check the output from the log file for errors. Perhaps there is running process on background. Kill them and repeate the script"
-	cmd /c pause | out-null
-	exit 1
-}
-
-
-if ($s.Name.split("_")[1].ToUpper() -eq "MINE") {
-	# it's the mine server where script is started
-	$target= .\start-console.bat show APPLY_REMOTE_INTERFACE| Select-String -Pattern ^APPLY
-	$t= $target -split ' '
-	$t_servername=$t[2] | %{$_.Substring(0, $_.length - 5) }
-
-	(Get-Service -ComputerName $t_servername -Name $s.Name.Replace('MINE','APPLY')).start()
-	(Get-Service -Name $s.Name).start()
-} else {
-	# it's the apply server where script is started
-	$target= .\start-console.bat show MINE_REMOTE_INTERFACE| Select-String -Pattern ^MINE
-	$t= $target -split ' '
-	$t_servername=$t[2] | %{$_.Substring(0, $_.length - 5) }
-
-	(Get-Service -ComputerName $t_servername -Name $s.Name.Replace('APPLY','MINE')).start()
-	(Get-Service -Name $s.Name).start()
-}
-
-Write-Host
-Write-Host
-Write-Host
-Write-Host wait 2m for sync both processes
-Start-Sleep -Seconds 120
-
-$xPLOG=.\start-console.bat list status| Select-String -Pattern ^MINE
-$MPLOG= $xPLOG -split ' '
-$numCycle = 0;
-
-Do {
-	Write-Host wait 1m for sync both processes
-	Start-Sleep -Seconds 60
-	$xPLOG=.\start-console.bat list status| Select-String -Pattern ^APPLY
-	$APLOG= $xPLOG -split ' '
-	$numCycle++
-	if ($numCycle.equals(5)) {
-		Write-Host "APPLY process stuck. Check apply log file or SQL Server for locks."
-	}
-
-}
-Until ($MPLOG[6] -le $APLOG[6])
-Write-Host APPLY process is up to date.
-
 
 .\start-console.bat pause MINE
 .\start-console.bat pause APPLY
@@ -309,8 +328,25 @@ $FLASHBACK_SCN = $sqlQueryExclude | sqlplus -silent system/oracle@$source_tns
 .\start-console.bat shutdown MINE
 .\start-console.bat shutdown APPLY
 Start-Sleep -Seconds 10
-(Get-Service -Name $s.Name).start()
-(Get-Service -ComputerName $t_servername -Name $s.Name.Replace('MINE','APPLY')).start()
+
+
+if ($s.Name.split("_")[1].ToUpper() -eq "MINE") {
+	# it's the mine server where script is started
+	$target= .\start-console.bat show APPLY_REMOTE_INTERFACE| Select-String -Pattern ^APPLY
+	$t= $target -split ' '
+	$t_servername=$t[2] | %{$_.Substring(0, $_.length - 5) }
+
+	(Get-Service -ComputerName $t_servername -Name $s.Name.Replace('MINE','APPLY')).start()
+	(Get-Service -Name $s.Name).start()
+} else {
+	# it's the apply server where script is started
+	$target= .\start-console.bat show MINE_REMOTE_INTERFACE| Select-String -Pattern ^MINE
+	$t= $target -split ' '
+	$t_servername=$t[2] | %{$_.Substring(0, $_.length - 5) }
+
+	(Get-Service -ComputerName $t_servername -Name $s.Name.Replace('APPLY','MINE')).start()
+	(Get-Service -Name $s.Name).start()
+}
 
 Write-Host
 Write-Host *****************************************************
