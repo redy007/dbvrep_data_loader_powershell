@@ -67,8 +67,8 @@ param (
 	[string]$sql_server_id = $( Read-Host "User ID for SQL Server connection [dbvrep variable APPLY.APPLY_USER (default SA user)]" ),
     [string]$sql_server_passwd = $(Read-Host -asSecureString "Password for SQL Server connection [dbvrep variable APPLY.APPLY_USER (default SA user)]"),
     [string]$system_password = $( Read-Host -asSecureString "Input password for System user on the source database" ),
-    [string]$prepare_tabs = "prepare_tabs.txt"
-    [switch]$refresh = $false
+    [string]$prepare_tabs = "prepare_tabs.txt",
+    [switch]$refresh = $false,
     [switch]$external_import = $false
 )
 
@@ -166,13 +166,11 @@ function stopDbvrepServices($s, $adress)
 	Write-Host APPLY process is up to date.
 }
 
-function loadTheTable($username, $password, $data_source, $oracle_schema $table, $database, $schema, $dbvrep_db_apply, $FLASHBACK_SCN, $dbvrep_user_apply, $sql_server_passwd) 
+function loadTheTable($username, $password, $data_source, $oracle_schema, $table, $database, $schema, $dbvrep_db_apply, $FLASHBACK_SCN, $dbvrep_user_apply, $sql_server_passwd) 
 {
 	add-type -AssemblyName System.Data.OracleClient
 	$result = New-Object System.Collections.ArrayList
-
 	$connection_string = "User Id=$username;Password=$password;Data Source=$data_source"
-
 	#tabulka
 	#$table="tblTest"
 	#potrebuji databazi // $database
@@ -190,7 +188,7 @@ function loadTheTable($username, $password, $data_source, $oracle_schema $table,
 	# sql server list of data types arraylist
 	$sqlDataType = 'DECIMAL','DECIMAL','VARCHAR','VARCHAR','VARCHAR','CHAR','CHAR','DATETIME','VARBINARY','TEXT','VARBINARY(MAX)','x','x','x','x','x','x','DATETIME2','x','x','x','x'
 
-	$statement = "select COLUMN_NAME, DATA_TYPE, DECODE(NULLABLE,'N', 'NOT NULL', 'Y', ' '), NVL(DATA_PRECISION, 0), NVL(DATA_SCALE, 0), NVL(DATA_LENGTH, 0) from ALL_TAB_COLS where TABLE_NAME = upper('$table') and OWNER = 'MSI' order by COLUMN_ID"
+	$statement = "select COLUMN_NAME, DATA_TYPE, DECODE(NULLABLE,'N', 'NOT NULL', 'Y', ' '), NVL(DATA_PRECISION, 0), NVL(DATA_SCALE, 0), NVL(DATA_LENGTH, 0) from ALL_TAB_COLS where TABLE_NAME = upper('$table') and OWNER = upper('$oracle_schema') order by COLUMN_ID"
 	$col_name = $null
 	$dtype = $null
 	$null_able = $null
@@ -228,10 +226,11 @@ function loadTheTable($username, $password, $data_source, $oracle_schema $table,
 	    	$DATA_LENGTH += $result.GetValue(5)
 	    }
 	} catch {
-	    Write-Error (“Database Exception: {0}`n{1}” -f `
+	    Write-Error ("Database Exception: {0}`n{1}" -f `
 	        $con.ConnectionString, $_.Exception.ToString())
 	}
 
+	$SELECT_COLUMNS_NAME = ""
 	"create table $database.$schema.$table (" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
 	$DDL.Add("create table $database.$schema.$table (")
 	For ($I=0;$I -lt $col_name.count;$I++) {
@@ -268,12 +267,13 @@ function loadTheTable($username, $password, $data_source, $oracle_schema $table,
 	}
 	');' | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
 	$DDL.Add(");")
-
+	Write-Host $SELECT_COLUMNS_NAME
 	$SELECT_COLUMNS_NAME = $SELECT_COLUMNS_NAME.trim(",", " ")
+	Write-Host $SELECT_COLUMNS_NAME
 
 	"" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
 	$rows_pk = ""
-	$statement = "select COLUMN_NAME from ALL_CONS_COLUMNS where CONSTRAINT_NAME = (select CONSTRAINT_NAME from ALL_CONSTRAINTS where CONSTRAINT_TYPE = 'P' and OWNER = 'MSI' and TABLE_NAME= upper('$table')) order by POSITION"
+	$statement = "select COLUMN_NAME from ALL_CONS_COLUMNS where CONSTRAINT_NAME = (select CONSTRAINT_NAME from ALL_CONSTRAINTS where CONSTRAINT_TYPE = 'P' and OWNER = upper('$oracle_schema') and TABLE_NAME= upper('$table')) order by POSITION"
 
 	$con = New-Object System.Data.OracleClient.OracleConnection($connection_string)
 	$con.Open()
@@ -360,9 +360,9 @@ function loadTheTable($username, $password, $data_source, $oracle_schema $table,
 	$cmd.Connection = $sqlconn;
 	$cmd.CommandText = $DDL
 	$rows = $cmd.ExecuteNonQuery();
-
-	$statement = "select $SELECT_COLUMNS_NAME from msi.tblTest as of SCN $FLASHBACK_SCN"
-
+	$FLASHBACK_SCN = $FLASHBACK_SCN.trim(" ")
+	$statement = "select $SELECT_COLUMNS_NAME from $oracle_schema.$table as of SCN $FLASHBACK_SCN"
+	Write-Host $statement
 	try{
 	    $con = New-Object System.Data.OracleClient.OracleConnection($connection_string)
 
@@ -378,14 +378,14 @@ function loadTheTable($username, $password, $data_source, $oracle_schema $table,
 	    # Write-Host $result
 
 	} catch {
-	    Write-Error (“Database Exception: {0}`n{1}” -f `
+	    Write-Error ("Database Exception: {0}`n{1}" -f `
 	        $con.ConnectionString, $_.Exception.ToString())
 	} 
 
 	$sqlbc = new-object system.data.sqlclient.Sqlbulkcopy($sqlconn);
 	$sqlbc.DestinationTableName="$schema.$table";
 	$sqlbc.WriteToServer($result); 
-	$sqlbc.close
+	$sqlbc.close()
 }
 
 
@@ -432,7 +432,7 @@ if (!(Test-Path $adress\$prepare_tabs)) {
 }
 
 if ($refresh) {
-	stopDbvrepServices($s $adress)
+	stopDbvrepServices $s $adress
 }
 
 $ddcFile = Get-ChildItem -Filter *ddc
@@ -484,7 +484,11 @@ foreach($line in Get-Content .\$prepare_tabs) {
 
 
 & $dbvrepexe --ddcfile $ddcFile read prepare_script.txt |Out-File -Encoding ASCII -FilePath prepare_script_output.txt 
-
+# WARN-9015: Table already prepared on apply. To force the prepare again,
+# ERR-9219: Errors detected, will not prepare the table MSI.TEST_1.
+# musim precist log a reagovat na tuhle chybu
+# kdyby nahodou byly exclude columns v tabulkach, co nebyly prepared, tak se musi vyradit taky
+# pri pridavani tabulek do sql serveru musim tuhle kontrolu provest taky 
 
 $dbvrep_db_apply = & $dbvrepexe --ddcfile $ddcFile show APPLY.APPLY_DATABASE| Select-String -Pattern ^APPLY.APPLY_DATABASE
 $dbvrep_db_apply_tmp=$dbvrep_db_apply[0]
@@ -543,7 +547,7 @@ cmd /c pause | out-null
 	$oracle_schema = $line.split('.')[0]
 	# "prepare table $line rename to $rename_schema.$renameTo"  | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
 	# function loadTheTable($username, $password, $data_source, $table, $database, $schema, $dbvrep_db_apply, $FLASHBACK_SCN) 
-	loadTheTable "SYSTEM" $system_password $source_tns $line $oracle_schema $renameTo $rename_schema.split('.')[0] $rename_schema.split('.')[1] $renameTo $dbvrep_db_apply $FLASHBACK_SCN $dbvrep_user_apply $sql_server_passwd 
+	loadTheTable "SYSTEM" $system_password $source_tns $oracle_schema $renameTo $rename_schema.split('.')[0] $rename_schema.split('.')[1] $dbvrep_db_apply $FLASHBACK_SCN $dbvrep_user_apply $sql_server_passwd 
 	# $line je blbost, protoze to je cela radka -> tudiz predelat
 
 	# $username, $password, $data_source, $table, $database, $schema, $dbvrep_db_apply, $FLASHBACK_SCN) 
@@ -590,7 +594,8 @@ exit
 "@
 $FLASHBACK_SCN = $sqlQueryExclude | sqlplus -silent system/oracle@$source_tns 
 (gc exclude_cols.txt) | ? {$_.trim() -ne "" } | set-content exclude_cols.txt
-$content = [System.IO.File]::ReadAllText("exclude_cols.txt")
+$excludeFile = Get-Item ".\exclude_cols.txt"
+$content = [System.IO.File]::ReadAllText($excludeFile.FullName)
 $content = $content.Trim()
 [System.IO.File]::WriteAllText("exclude_cols.txt", $content)
 if (!((gc .\exclude_cols.txt) -eq $null))
