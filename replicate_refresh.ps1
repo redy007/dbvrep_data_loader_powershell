@@ -262,16 +262,14 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 		$COLUMN_NAME = $col_name[$I]
 		$SELECT_COLUMNS_NAME += ", " + $COLUMN_NAME
 		$nullable = $null_able[$I].trim()
-		"$COLUMN_NAME $DATA_TYPE_SQL $nullable,"| Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
+		#"$COLUMN_NAME $DATA_TYPE_SQL $nullable,"| Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
 		$DDL.Add("$COLUMN_NAME $DATA_TYPE_SQL $nullable,")
 	}
-	');' | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
+	#');' | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
 	$DDL.Add(");")
-	Write-Host $SELECT_COLUMNS_NAME
 	$SELECT_COLUMNS_NAME = $SELECT_COLUMNS_NAME.trim(",", " ")
-	Write-Host $SELECT_COLUMNS_NAME
 
-	"" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
+	#"" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
 	$rows_pk = ""
 	$statement = "select COLUMN_NAME from ALL_CONS_COLUMNS where CONSTRAINT_NAME = (select CONSTRAINT_NAME from ALL_CONSTRAINTS where CONSTRAINT_TYPE = 'P' and OWNER = upper('$oracle_schema') and TABLE_NAME= upper('$table')) order by POSITION"
 
@@ -285,7 +283,7 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 	}
 	if ($result.HasRows) {
 	$rows_pk = $rows_pk.trim(",", " ")
-	"ALTER TABLE $database.$schema.$table ADD PRIMARY KEY ($rows_pk);"  | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
+	#"ALTER TABLE $database.$schema.$table ADD PRIMARY KEY ($rows_pk);"  | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
 	$DDL.Add("ALTER TABLE $database.$schema.$table ADD PRIMARY KEY ($rows_pk);")
 	}
 
@@ -319,7 +317,7 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 			$constraint_name = $result.GetString(1)
 		}
 		$rows_uk = $rows_uk.trim(",", " ")
-	"ALTER TABLE $database.$schema.$table ADD UNIQUE ($rows_uk);"  | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
+	#"ALTER TABLE $database.$schema.$table ADD UNIQUE ($rows_uk);"  | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
 	$DDL.Add("ALTER TABLE $database.$schema.$table ADD UNIQUE ($rows_uk);")
 	}
 
@@ -352,7 +350,6 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 
 
 	$SQL_SERVER_DB = (Get-OdbcDsn -Name $dbvrep_db_apply).Attribute["Server"]
-	#$sqlconn = "server=$SQL_SERVER_DB;database=$database;trusted_connection=true";
 	$sqlconn = "server=$SQL_SERVER_DB;database=$database;uid=$dbvrep_user_apply;pwd=$sql_server_passwd;"
 	$sqlconn = new-object system.data.sqlclient.SqlConnection($sqlconn);
 	$sqlconn.Open();
@@ -362,7 +359,7 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 	$rows = $cmd.ExecuteNonQuery();
 	$FLASHBACK_SCN = $FLASHBACK_SCN.trim(" ")
 	$statement = "select $SELECT_COLUMNS_NAME from $oracle_schema.$table as of SCN $FLASHBACK_SCN"
-	Write-Host $statement
+
 	try{
 	    $con = New-Object System.Data.OracleClient.OracleConnection($connection_string)
 
