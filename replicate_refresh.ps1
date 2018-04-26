@@ -186,8 +186,10 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 	# oracle list of data types arraylist
 	$oracleDataType = 'NUMBER','FLOAT','NVARCHAR2','VARCHAR2','VARCHAR','CHAR','NCHAR','DATE','RAW','LONG','LONG RAW','BFILE','CLOB','BLOB','LOB','NCLOB','INTERVAL','TIMESTAMP','BINARY_FLOAT','BINARY_DOUBLE','ROWID','XML'
 	# sql server list of data types arraylist
-	$sqlDataType = 'DECIMAL','DECIMAL','VARCHAR','VARCHAR','VARCHAR','CHAR','CHAR','DATETIME','VARBINARY','TEXT','VARBINARY(MAX)','x','x','x','x','x','x','DATETIME2','x','x','x','x'
+	$sqlDataType = 'DECIMAL','DECIMAL','NVARCHAR','VARCHAR','VARCHAR','CHAR','NCHAR','DATETIME','VARBINARY','TEXT','VARBINARY(MAX)','x','x','x','x','x','x','DATETIME2','x','x','x','x'
 
+	# NVL dat na 40 treba, aby se nula nepletla s opravdovou nulou
+	# predelta vsechny if pod timto
 	$statement = "select COLUMN_NAME, DATA_TYPE, DECODE(NULLABLE,'N', 'NOT NULL', 'Y', ' '), NVL(DATA_PRECISION, 0), NVL(DATA_SCALE, 0), NVL(DATA_LENGTH, 0) from ALL_TAB_COLS where TABLE_NAME = upper('$table') and OWNER = upper('$oracle_schema') order by COLUMN_ID"
 	$col_name = $null
 	$dtype = $null
@@ -237,9 +239,12 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 		$mapNumber = $oracleDataType.indexof($dtype[$I])
 		$DATA_TYPE_SQL = $sqlDataType[$mapNumber]
 		if ($DATA_TYPE_SQL -eq "DECIMAL" -AND $DATA_SCALE[$I] -eq '0') {
-			if ($DATA_PRECISION[$I] -ne '0') {
-				$CURR_DATA_PRECISION = $DATA_PRECISION[$I]
-				$DATA_TYPE_SQL = "BIGINT" + "($CURR_DATA_PRECISION)"
+			if ($dtype[$I] -eq "FLOAT") {
+				$DATA_TYPE_SQL = "DECIMAL(38,18)"
+			}
+			elseif ($DATA_PRECISION[$I] -ne '0') {
+			   	$CURR_DATA_PRECISION = $DATA_PRECISION[$I]
+				$DATA_TYPE_SQL = "DECIMAL" + "($CURR_DATA_PRECISION)" 
 			}
 			else {
 				$DATA_TYPE_SQL = "BIGINT"
@@ -247,14 +252,15 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 		}
 		# stanovani precision a scale pro numbers
 		elseif ($DATA_TYPE_SQL -eq "DECIMAL" -AND ($DATA_SCALE[$I] -ne '0' -OR $DATA_PRECISION[$I] -ne '0')) {
-			$CURR_DATA_SCALE = $DATA_SCALE[$I]
-			$CURR_DATA_PRECISION = $DATA_PRECISION[$I]
-		    $DATA_TYPE_SQL = $DATA_TYPE_SQL+"($CURR_DATA_PRECISION,$CURR_DATA_SCALE)"
+		    $DATA_TYPE_SQL = "DECIMAL(38,18)"
 		} 
 		# stanovani precision pro string (budu muset vsechny vypsat)
 		elseif (($DATA_TYPE_SQL -eq "VARCHAR" -OR $DATA_TYPE_SQL -eq "CHAR" -OR $DATA_TYPE_SQL -eq "RAW") -AND ($DATA_LENGTH[$I] -ne '0')) {
 			$CURR_DATA_LENGTH = $DATA_LENGTH[$I];
 			$DATA_TYPE_SQL = $DATA_TYPE_SQL+"($CURR_DATA_LENGTH)"
+		}
+		elseif ($dtype[$I] -like 'INTERVAL*') {
+			$DATA_TYPE_SQL = "DATETIME2"
 		}
 		elseif ($DATA_TYPE_SQL -eq "x" -OR $DATA_TYPE_SQL -eq "-1") {
 		    continue
@@ -262,14 +268,14 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 		$COLUMN_NAME = $col_name[$I]
 		$SELECT_COLUMNS_NAME += ", " + $COLUMN_NAME
 		$nullable = $null_able[$I].trim()
-		#"$COLUMN_NAME $DATA_TYPE_SQL $nullable,"| Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
+		"$COLUMN_NAME $DATA_TYPE_SQL $nullable,"| Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
 		$DDL.Add("$COLUMN_NAME $DATA_TYPE_SQL $nullable,")
 	}
-	#');' | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
+	');' | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
 	$DDL.Add(");")
 	$SELECT_COLUMNS_NAME = $SELECT_COLUMNS_NAME.trim(",", " ")
 
-	#"" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
+	"" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
 	$rows_pk = ""
 	$statement = "select COLUMN_NAME from ALL_CONS_COLUMNS where CONSTRAINT_NAME = (select CONSTRAINT_NAME from ALL_CONSTRAINTS where CONSTRAINT_TYPE = 'P' and OWNER = upper('$oracle_schema') and TABLE_NAME= upper('$table')) order by POSITION"
 
@@ -356,7 +362,21 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 	$cmd = New-object System.Data.SqlClient.SqlCommand;
 	$cmd.Connection = $sqlconn;
 	$cmd.CommandText = $DDL
-	$rows = $cmd.ExecuteNonQuery();
+	try {
+		$rows = $cmd.ExecuteNonQuery();
+	} catch [System.Data.SqlClient.SqlException] {
+		if ( $_.Exception.Number -eq "2714" ) {
+			$cmd.CommandText = "TRUNCATE TABLE $database.$schema.$table"
+			$cmd.ExecuteNonQuery();
+		}
+		else {
+
+		}
+	} catch {
+	    Write-Error ("Database Exception: {0}`n{1}" -f `
+	        $con.ConnectionString, $_.Exception.ToString())
+	} 
+
 	$FLASHBACK_SCN = $FLASHBACK_SCN.trim(" ")
 	$statement = "select $SELECT_COLUMNS_NAME from $oracle_schema.$table as of SCN $FLASHBACK_SCN"
 
@@ -373,6 +393,9 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 	    $result = $cmd.ExecuteReader()
 	    # Do something with the results...
 	    # Write-Host $result
+
+	} catch [System.Data.SqlClient.SqlException] {
+		Write-Host $_.Exception.Number
 
 	} catch {
 	    Write-Error ("Database Exception: {0}`n{1}" -f `
@@ -480,7 +503,31 @@ foreach($line in Get-Content .\$prepare_tabs) {
 "engine lock release all" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
 
 
-& $dbvrepexe --ddcfile $ddcFile read prepare_script.txt |Out-File -Encoding ASCII -FilePath prepare_script_output.txt 
+& $dbvrepexe --ddcfile $ddcFile read prepare_script.txt 2>&1|Out-File -Encoding ASCII -FilePath prepare_script_output.txt 
+$notPreparedTabs = @()
+$tabsToPrepare = @()
+$excludeTabsFilter = ""
+Get-Content prepare_script_output.txt |
+    ForEach-Object {
+        if($_ -match ('^' + [regex]::Escape('ERR-9219')))
+        {
+            $notPreparedTabs += ($_.split(' ')[8]) -Replace ".$"
+        }
+    }
+
+
+Get-Content prepare_tabs.txt |
+    ForEach-Object {
+            $tabsToPrepare += $_
+    }
+
+$excludeTabsArray = $tabsToPrepare| ? {!($notPreparedTabs -contains $_)}
+""|Out-File -Encoding ASCII -FilePath prepare_script_output.txt 
+$excludeTabsArray |Out-File -Encoding ASCII -FilePath prepare_script_output.txt 
+foreach ($foo in $excludeTabsArray) {
+	$excludeTabsFilter += ", " + "`'" + $foo + "`'"
+}
+$excludeTabsFilter = $excludeTabsFilter.trim(",", " ")
 # WARN-9015: Table already prepared on apply. To force the prepare again,
 # ERR-9219: Errors detected, will not prepare the table MSI.TEST_1.
 # musim precist log a reagovat na tuhle chybu
@@ -539,7 +586,7 @@ Write-Host
 Write-Host "Program is paused until you finish the instantiation"
 cmd /c pause | out-null
 } else {
-	foreach($line in Get-Content .\$prepare_tabs) {
+	foreach($line in $excludeTabsArray) {
 	$renameTo = $line.split('.')[1]
 	$oracle_schema = $line.split('.')[0]
 	# "prepare table $line rename to $rename_schema.$renameTo"  | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
@@ -569,6 +616,7 @@ spool exclude_cols.txt
 select 'EXCLUDE COLUMN '||d.owner||'.'||d.table_name||'.'||c.column_name thestring
 from dba_tab_columns c, dba_tables d
 where d.owner = UPPER('$SCHEMA')
+and d.table_name in ($excludeTabsFilter)
 and d.owner = c.owner
 and d.table_name = c.table_name
 and c.DATA_TYPE not in ( 
