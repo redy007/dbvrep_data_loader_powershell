@@ -83,18 +83,14 @@ function stopDbvrepServices($s, $adress)
 	$dbvrepexe = $dbvrepexe.Replace("`"","")
 	$ddcFile = Get-ChildItem -Filter *ddc
 	$ddcFile = $ddcFile[0].Name
-	# risk the second process is running
-	# user will find it out when all.bat script fail.
+
+	& $dbvrepexe --ddcfile $ddcFile shutdown all
+	
+	Start-Sleep -Seconds 10
 	if (Get-Service -Name $s.Name| Where-Object {$_.Status -eq "Running"}) {
-		& $dbvrepexe --ddcfile $ddcFile shutdown all
-		
-		Start-Sleep -Seconds 10
-		if (Get-Service -Name $s.Name| Where-Object {$_.Status -eq "Running"}) {
-			Write-Host "Check the output from the log file for errors. You need to fix it before you can continue."
-			cmd /c pause | out-null
-			exit 1
-		} 
-	}
+		Write-Warning "After shutdown one of The dbvisit service is still running. Stop it manully and enter to continue this script."
+		cmd /c pause | out-null
+	} 
 
 	$vysledek=Get-ChildItem -Filter *batch.bat
 	$v=$adress + $vysledek.Name
@@ -130,6 +126,17 @@ function stopDbvrepServices($s, $adress)
 
 		(Get-Service -ComputerName $t_servername -Name $s.Name.Replace('MINE','APPLY')).start()
 		(Get-Service -Name $s.Name).start()
+
+		Start-Sleep -Seconds 10
+		if (Get-Service -Name $s.Name| Where-Object {$_.Status -ne "Running"}) {
+			Write-Host "start the MINE service manually on this server."
+			cmd /c pause | out-null
+		}
+		if (Get-Service -ComputerName $t_servername -Name $s.Name.Replace('MINE','APPLY')| Where-Object {$_.Status -ne "Running"}) {
+			Write-Host "start the APPLY service manually on server $t_servername."
+			cmd /c pause | out-null
+		}
+
 	} else {
 		# it's the apply server where script is started
 		$target= & $dbvrepexe --ddcfile $ddcFile show MINE_REMOTE_INTERFACE| Select-String -Pattern ^MINE
@@ -138,6 +145,16 @@ function stopDbvrepServices($s, $adress)
 
 		(Get-Service -ComputerName $t_servername -Name $s.Name.Replace('APPLY','MINE')).start()
 		(Get-Service -Name $s.Name).start()
+
+		Start-Sleep -Seconds 10
+			if (Get-Service -Name $s.Name| Where-Object {$_.Status -ne "Running"}) {
+				Write-Warning "start the APPLY service manually on this server."
+				cmd /c pause | out-null
+			}
+			if (Get-Service -ComputerName $t_servername -Name $s.Name.Replace('MINE','APPLY')| Where-Object {$_.Status -ne "Running"}) {
+				Write-Warning "start the MINE service manually on server $t_servername."
+				cmd /c pause | out-null
+			}
 	}
 
 	Write-Host
@@ -157,7 +174,7 @@ function stopDbvrepServices($s, $adress)
 		$APLOG= $xPLOG -split ' '
 		$numCycle++
 		if ($numCycle.equals(5)) {
-			Write-Host "APPLY process stuck. Check apply log file or SQL Server for locks."
+			Write-Error "APPLY process stuck. Check apply log file or SQL Server for locks."
 			exit 1 
 		}
 
@@ -171,17 +188,6 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 	add-type -AssemblyName System.Data.OracleClient
 	$result = New-Object System.Collections.ArrayList
 	$connection_string = "User Id=$username;Password=$password;Data Source=$data_source"
-	#tabulka
-	#$table="tblTest"
-	#potrebuji databazi // $database
-	#$database = 'MSI'
-	#potrebuji schema (dbo) // $schema
-	#$schema = 'dbo'
-	#pro create table radek
-
-	#$COLUMN_NAME = New-Object System.Collections.ArrayList
-	#$DATA_TYPE = New-Object System.Collections.ArrayList
-	#$NULLABLE = New-Object System.Collections.ArrayList
 
 	# oracle list of data types arraylist
 	$oracleDataType = 'NUMBER','FLOAT','NVARCHAR2','VARCHAR2','VARCHAR','CHAR','NCHAR','DATE','RAW','LONG','LONG RAW','BFILE','CLOB','BLOB','LOB','NCLOB','INTERVAL','TIMESTAMP','BINARY_FLOAT','BINARY_DOUBLE','ROWID','XML'
@@ -234,6 +240,7 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 
 	$SELECT_COLUMNS_NAME = ""
 	"create table $database.$schema.$table (" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
+
 	$DDL.Add("create table $database.$schema.$table (")
 	For ($I=0;$I -lt $col_name.count;$I++) {
 		$mapNumber = $oracleDataType.indexof($dtype[$I])
@@ -255,11 +262,11 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 		    $DATA_TYPE_SQL = "DECIMAL(38,18)"
 		} 
 		# stanovani precision pro string (budu muset vsechny vypsat)
-		elseif (($DATA_TYPE_SQL -eq "VARCHAR" -OR $DATA_TYPE_SQL -eq "CHAR" -OR $DATA_TYPE_SQL -eq "RAW") -AND ($DATA_LENGTH[$I] -ne '0')) {
+		elseif (($DATA_TYPE_SQL -eq "VARCHAR" -OR $DATA_TYPE_SQL -eq "CHAR" -OR $DATA_TYPE_SQL -eq "NCHAR" -OR $DATA_TYPE_SQL -eq "VARBINARY") -AND ($DATA_LENGTH[$I] -ne '0')) {
 			$CURR_DATA_LENGTH = $DATA_LENGTH[$I];
 			$DATA_TYPE_SQL = $DATA_TYPE_SQL+"($CURR_DATA_LENGTH)"
 		}
-		elseif ($dtype[$I] -like 'INTERVAL*') {
+		elseif ($dtype[$I] -like 'TIMESTAMP*') {
 			$DATA_TYPE_SQL = "DATETIME2"
 		}
 		elseif ($DATA_TYPE_SQL -eq "x" -OR $DATA_TYPE_SQL -eq "-1") {
@@ -293,15 +300,11 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 	$DDL.Add("ALTER TABLE $database.$schema.$table ADD PRIMARY KEY ($rows_pk);")
 	}
 
-	#jit cestou konkretniho jmena nebo nechat na sql serveru?
-	#pro ted radeji nechat na sql serveru
-	#do budoucna resit na zaklade stringu Oracle (syscol...), tak sql server vytvorit jmeno
-	#kdyz unikatni, pak prenesu
 	#ALTER TABLE $table ADD CONSTRAINT $statement_pk_CONSTRAINT_NAME PRIMARY KEY ($con_column_name );
 
 	$rows_uk = ""
 	$constraint_name = $null
-	$statement = "select COLUMN_NAME,CONSTRAINT_NAME from ALL_CONS_COLUMNS where CONSTRAINT_NAME = (select CONSTRAINT_NAME from ALL_CONSTRAINTS where CONSTRAINT_TYPE = 'U' and OWNER = 'MSI' and TABLE_NAME= upper('$table')) order by CONSTRAINT_NAME, POSITION"
+	$statement = "select COLUMN_NAME,CONSTRAINT_NAME from ALL_CONS_COLUMNS where CONSTRAINT_NAME = (select CONSTRAINT_NAME from ALL_CONSTRAINTS where CONSTRAINT_TYPE = 'U' and OWNER = upper('$oracle_schema') and TABLE_NAME= upper('$table')) order by CONSTRAINT_NAME, POSITION"
 
 	$con = New-Object System.Data.OracleClient.OracleConnection($connection_string)
 	$con.Open()
@@ -323,11 +326,11 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 			$constraint_name = $result.GetString(1)
 		}
 		$rows_uk = $rows_uk.trim(",", " ")
-	#"ALTER TABLE $database.$schema.$table ADD UNIQUE ($rows_uk);"  | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
+	"ALTER TABLE $database.$schema.$table ADD UNIQUE ($rows_uk);"  | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
 	$DDL.Add("ALTER TABLE $database.$schema.$table ADD UNIQUE ($rows_uk);")
 	}
 
-	$statement = "SELECT ui.COLUMN_NAME, ui.index_name FROM ALL_IND_COLUMNS ui, all_constraints uc WHERE ui.table_name = uc.table_name AND ui.table_name = '$table' AND ui.index_name NOT IN (SELECT uc.index_name FROM all_constraints uc WHERE constraint_type IN ('P','U') AND uc.table_name = '$table' ) order by ui.index_name, ui.COLUMN_POSITION"
+	$statement = "SELECT ui.COLUMN_NAME, ui.INDEX_NAME FROM all_ind_columns ui, all_constraints uc WHERE ui.table_name = uc.TABLE_NAME and ui.table_name = upper('$table') and uc.CONSTRAINT_TYPE not in ('P','U', 'C') and table_owner = upper('$oracle_schema') ORDER BY ui.index_name, ui.column_position"
 	$index_name = $null
 	$rows_idx = ""
 
@@ -351,6 +354,7 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 			$index_name = $result.GetString(1)
 		}
 		$rows_idx = $rows_idx.trim(",", " ")
+		"CREATE INDEX $index_name ON $database.$schema.$table ($rows_idx);" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
 		$DDL.Add("CREATE INDEX $index_name ON $database.$schema.$table ($rows_idx);")
 	}
 
@@ -367,15 +371,40 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 	} catch [System.Data.SqlClient.SqlException] {
 		if ( $_.Exception.Number -eq "2714" ) {
 			$cmd.CommandText = "TRUNCATE TABLE $database.$schema.$table"
+			Write-Host "TRUNCATE TABLE: " $database "." $schema "." $table
 			$cmd.ExecuteNonQuery();
 		}
 		else {
-
+			Write-Host "different error: " $_.Exception.ToString()
 		}
 	} catch {
 	    Write-Error ("Database Exception: {0}`n{1}" -f `
 	        $con.ConnectionString, $_.Exception.ToString())
 	} 
+
+
+	$newType = 'namespace System.Data.SqlClient
+		{    
+		 using Reflection;
+		 
+		 public static class SqlBulkCopyExtension
+		 {
+		 const String _rowsCopiedFieldName = "_rowsCopied";
+		 static FieldInfo _rowsCopiedField = null;
+		 
+		 public static int RowsCopiedCount(this SqlBulkCopy bulkCopy)
+		 {
+		 if (_rowsCopiedField == null) _rowsCopiedField = typeof(SqlBulkCopy).GetField(_rowsCopiedFieldName, BindingFlags.NonPublic | BindingFlags.GetField | BindingFlags.Instance);            
+		 return (int)_rowsCopiedField.GetValue(bulkCopy);
+		 }
+		 }
+		}
+		'
+
+    Add-Type -ReferencedAssemblies 'System.Data.dll' -TypeDefinition $newType
+	$null = [Reflection.Assembly]::LoadWithPartialName("System.Data")
+
+
 
 	$FLASHBACK_SCN = $FLASHBACK_SCN.trim(" ")
 	$statement = "select $SELECT_COLUMNS_NAME from $oracle_schema.$table as of SCN $FLASHBACK_SCN"
@@ -402,18 +431,100 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 	        $con.ConnectionString, $_.Exception.ToString())
 	} 
 
-	$sqlbc = new-object system.data.sqlclient.Sqlbulkcopy($sqlconn);
-	$sqlbc.DestinationTableName="$schema.$table";
-	$sqlbc.WriteToServer($result); 
-	$sqlbc.close()
+	try {
+		$sqlbc = new-object system.data.sqlclient.Sqlbulkcopy($sqlconn);
+		$sqlbc.DestinationTableName="$schema.$table";
+		#$sqlbc.bulkcopyTimeout = 0 
+		$sqlbc.BatchSize = 50000
+		$sqlbc.NotifyAfter = 50000
+		$sqlbc.Add_SqlRowscopied({Write-Host "$($args[1].RowsCopied) rows copied" })
+		$sqlbc.WriteToServer($result);
+		$sqlbc.close()
+		Write-Host "WriteToServer"
+		Write-Host	$oracle_schema "." $table
+
+		# "Note: This count does not take into consideration the number of rows actually inserted when Ignore Duplicates is set to ON."
+		$total = [System.Data.SqlClient.SqlBulkCopyExtension]::RowsCopiedCount($sqlbc)
+		Write-Host "$total total rows written"
+		
+	} catch [System.Data.OracleClient.OracleException] {
+		$oraErrorNumber = ($_.Exception.GetBaseException()[0] -split ':')[1]
+		$oraErrorName = ($_.Exception.GetBaseException()[0] -split ' ')[3]
+		#Write-Host $_.Exception.GetBaseException()[0]
+		Write-Host $oraErrorNumber ":" $oraErrorName "-> table "$oracle_schema"."$table
+
+
+
+		"Table $oracle_schema"."$table added to replication"| Out-File -append -Encoding ASCII -FilePath $prepare_tabs
+
+		#unprepare the table with error
+		$tempvar= wmic service $s.name get PathName
+		$dbvrepexe = ($tempvar[2] -split "(?!^)(?=--ddcfile)")[0].Trim()
+		$dbvrepexe = $dbvrepexe.Replace("`"","")
+		$ddcFile = Get-ChildItem -Filter *ddc
+		$ddcFile = $ddcFile[0].Name
+		& $dbvrepexe --ddcfile $ddcFile unprepare table $oracle_schema"."$table  | Out-Null
+
+		#Write-Host	$oracle_schema "." $table
+
+	} catch {
+	    Write-Error ("Database Exception: {0}`n{1}" -f `
+	        $con.ConnectionString, $_.Exception.ToString())
+		    Write-Host "WriteToServer"
+		    Write-Host ($_.Exception.GetBaseException()[0] -split ':')[1]
+		    Write-Host	$oracle_schema "." $table
+		    Write-Host $_.Exception.GetType().FullName 
+	}
+	#finally {
+	#} 
 }
 
+function createForeignKeys($username, $password, $data_source, $oracle_schema, $table, $database, $schema, $dbvrep_db_apply, $FLASHBACK_SCN, $dbvrep_user_apply, $sql_server_passwd)    
+{
+
+	$DDL = New-Object System.Collections.Generic.List[System.Object]
+
+	add-type -AssemblyName System.Data.OracleClient
+	$result = New-Object System.Collections.ArrayList
+	$connection_string = "User Id=$username;Password=$password;Data Source=$source_tns"
+
+	$statement = "SELECT a.constraint_name, a.column_name, c_pk.table_name, b.column_name FROM all_cons_columns a JOIN all_constraints c ON a.owner = c.owner AND 
+	a.constraint_name = c.constraint_name JOIN all_constraints c_pk ON c.r_owner = c_pk.owner AND c.r_constraint_name = c_pk.constraint_name JOIN all_cons_columns b ON C_PK.owner = b.owner 
+	AND  C_PK.CONSTRAINT_NAME = b.constraint_name AND b.POSITION = a.POSITION WHERE c.constraint_type = 'R' AND c.table_name = upper('$table') AND c.owner=upper('$oracle_schema')"
+	$con = New-Object System.Data.OracleClient.OracleConnection($connection_string)
+	$con.Open()
+	$cmd = $con.CreateCommand()
+	$cmd.CommandText = $statement
+	$result = $cmd.ExecuteReader()
+	while ($result.Read()) {
+		$constraint_name = $result.GetString(0)
+		$columnName = $result.GetString(1)
+		$rTableName = $result.GetString(2)		
+		$rColName = $result.GetString(3)
+		$DDL.Add("ALTER TABLE $database.$schema.$table ADD CONSTRAINT $constraint_name FOREIGN KEY ($columnName) REFERENCES $database.$schema.$rTableName ($rColName)")
+	}
+
+	$SQL_SERVER_DB = (Get-OdbcDsn -Name $dbvrep_db_apply).Attribute["Server"]
+	$sqlconn = "server=$SQL_SERVER_DB;database=$database;uid=$dbvrep_user_apply;pwd=$sql_server_passwd;"
+	$sqlconn = new-object system.data.sqlclient.SqlConnection($sqlconn);
+	$sqlconn.Open();
+	$cmd = New-object System.Data.SqlClient.SqlCommand;
+	$cmd.Connection = $sqlconn;
+	$cmd.CommandText = $DDL
+	try {
+		$rows = $cmd.ExecuteNonQuery();
+	} catch {
+	    Write-Error ("Database Exception: {0}`n{1}" -f `
+	        $con.ConnectionString, $_.Exception.ToString())
+	} 
+
+}
 
 
 $service=Get-Service -name DBvisit*
 foreach ( $x in $service) { Write-Host $service.indexof($x) ... $x.name.remove(0,16) ... $x.status}
 #Write-Host Your choice? 
-$user_choice = Read-Host -Prompt 'What environment do you want to refresh?'
+$user_choice = Read-Host -Prompt 'What environment do you want to use?'
 $s=Get-Service -name Dbvisit*|select -Index $user_choice
 
 
@@ -433,7 +544,7 @@ cd $adress
 
 if (!(Test-Path $adress\$prepare_tabs)) {
 	$checkArray = $false
-	$prepareArray= & $dbvrepexe --ddcfile $ddcFile --silent list prepare
+	$prepareArray= & $dbvrepexe --ddcfile $ddcFile --silent list prepare 
 	foreach ($element in $prepareArray) {
 	    if ($checkArray) {
 	    	Write-Host $element.split(' ')[0]
@@ -457,15 +568,15 @@ if ($refresh) {
 
 $ddcFile = Get-ChildItem -Filter *ddc
 $ddcFile = $ddcFile[0].Name
-& $dbvrepexe --ddcfile $ddcFile  pause MINE
-& $dbvrepexe --ddcfile $ddcFile  pause APPLY
+& $dbvrepexe --ddcfile $ddcFile  pause MINE | Out-Null
+& $dbvrepexe --ddcfile $ddcFile  pause APPLY | Out-Null
 
 
 if (Test-Path $adress\prepare_script.txt) {
 	Clear-Content prepare_script.txt
 } 
 else {
-    New-Item -Name prepare_script.txt -ItemType File
+    New-Item -Name prepare_script.txt -ItemType File | Out-Null
 }
 
 if (!$rename_schema) {
@@ -586,65 +697,121 @@ Write-Host
 Write-Host "Program is paused until you finish the instantiation"
 cmd /c pause | out-null
 } else {
-	foreach($line in $excludeTabsArray) {
-	$renameTo = $line.split('.')[1]
-	$oracle_schema = $line.split('.')[0]
-	# "prepare table $line rename to $rename_schema.$renameTo"  | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
-	# function loadTheTable($username, $password, $data_source, $table, $database, $schema, $dbvrep_db_apply, $FLASHBACK_SCN) 
-	loadTheTable "SYSTEM" $system_password $source_tns $oracle_schema $renameTo $rename_schema.split('.')[0] $rename_schema.split('.')[1] $dbvrep_db_apply $FLASHBACK_SCN $dbvrep_user_apply $sql_server_passwd 
-	# $line je blbost, protoze to je cela radka -> tudiz predelat
 
-	# $username, $password, $data_source, $table, $database, $schema, $dbvrep_db_apply, $FLASHBACK_SCN) 
-	# potrebuji
-	#oracle: jmeno_systemu heslo tns_names ok
-	#oracle: schema a jmeno tabulky
-	#sql_server: jmeno_db jmeno_schematu jmeno_tabulky
-	#DSN_name
-	#FLASHBACK_SCN
+	$foreignKeyTab = New-Object System.Collections.Generic.List[System.Object]
+	$foreignKeySchema = New-Object System.Collections.Generic.List[System.Object]
+	add-type -AssemblyName System.Data.OracleClient
+	$result = New-Object System.Collections.ArrayList
+	$list = [System.Collections.Generic.List[System.Object]]
+	$systemName = "SYSTEM"
+	$connection_string = "User Id=$systemName;Password=$system_password;Data Source=$source_tns"
+
+	# vytvorit pole se vsemi replikovanymi tabulkami
+	$preparedTabsArray = & $dbvrepexe --ddcfile $ddcFile --silent list prepare 
+	#$preparedTabsArray = $preparedTabsArray[7..($list.Length-2)]
+
+	Write-Host "Creating tables and loading data to SQL Server"
+	
+	foreach($line in $excludeTabsArray) {
+		$renameTo = $line.split('.')[1]
+		$oracle_schema = $line.split('.')[0]
+		# "prepare table $line rename to $rename_schema.$renameTo"  | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
+		# function loadTheTable($username, $password, $data_source, $table, $database, $schema, $dbvrep_db_apply, $FLASHBACK_SCN) 
+		loadTheTable "SYSTEM" $system_password $source_tns $oracle_schema $renameTo $rename_schema.split('.')[0] $rename_schema.split('.')[1] $dbvrep_db_apply $FLASHBACK_SCN $dbvrep_user_apply $sql_server_passwd 
+		# $line je blbost, protoze to je cela radka -> tudiz predelat
+
+		# $username, $password, $data_source, $table, $database, $schema, $dbvrep_db_apply, $FLASHBACK_SCN) 
+		# potrebuji
+		#oracle: jmeno_systemu heslo tns_names ok
+		#oracle: schema a jmeno tabulky
+		#sql_server: jmeno_db jmeno_schematu jmeno_tabulky
+		#DSN_name
+		#FLASHBACK_SCN
+		
+		$statement = "select d.owner, d.table_name from all_constraints d, all_constraints b where d.constraint_name=b.r_constraint_name and b.table_name=upper('$renameTo') and b.owner=upper('$oracle_schema') and b.constraint_type='R'"
+		$con = New-Object System.Data.OracleClient.OracleConnection($connection_string)
+		$con.Open()
+		$cmd = $con.CreateCommand()
+		$cmd.CommandText = $statement
+		$result = $cmd.ExecuteReader()
+		while ($result.Read()) {
+			$owner = $result.GetString(0)
+			$tableName = $result.GetString(1)
+			$outputTable = "*$owner.$tableName*"
+			if (($preparedTabsArray -like $outputTable).Count -gt 0) {
+				$foreignKeyTab.Add($renameTo)
+				$foreignKeySchema.Add($oracle_schema)
+			}
+		}
+	}
+
+	Write-Host "Creating FOREIGN constraints"
+	For ($M=0;$M -lt $foreignKeyTab.count;$M++) {
+		createForeignKeys "SYSTEM" $system_password $source_tns $foreignKeySchema[$M] $foreignKeyTab[$M] $rename_schema.split('.')[0] $rename_schema.split('.')[1] $dbvrep_db_apply $FLASHBACK_SCN $dbvrep_user_apply $sql_server_passwd
 	}
 }
 
-$sqlQueryExclude = @"
-set verify off
-set feedback off
-set linesize 100
-set pagesize 40000
-set heading off
+$lastStart = $false
+Write-Host "Excluding non supported columns"
 
-spool exclude_cols.txt
+foreach($line in $excludeTabsArray) {
+	$renameTo = $line.split('.')[1]
+	$oracle_schema = $line.split('.')[0]
 
-select 'EXCLUDE COLUMN '||d.owner||'.'||d.table_name||'.'||c.column_name thestring
-from dba_tab_columns c, dba_tables d
-where d.owner = UPPER('$SCHEMA')
-and d.table_name in ($excludeTabsFilter)
-and d.owner = c.owner
-and d.table_name = c.table_name
-and c.DATA_TYPE not in ( 
-'NUMBER',
-'FLOAT',
-'VARCHAR2',
-'VARCHAR',
-'CHAR',
-'NVARCHAR2',
-'NCHAR2',
-'NCHAR',
-'DATE',
-'RAW',
-'LONG',
-'LONG RAW')
-and data_type not like 'TIMESTAMP%'
-order by d.owner,d.table_name,c.column_name;
-spool off
-exit
+	$sqlQueryExclude = @"
+	set verify off
+	set feedback off
+	set linesize 100
+	set pagesize 40000
+	set heading off
+
+	spool exclude_cols.txt
+
+	select 'EXCLUDE COLUMN '||d.owner||'.'||d.table_name||'.'||c.column_name thestring
+	from dba_tab_columns c, dba_tables d
+	where d.owner = UPPER('$oracle_schema')
+	and d.table_name = upper('$renameTo')
+	and d.owner = c.owner
+	and d.table_name = c.table_name
+	and c.DATA_TYPE not in ( 
+	'NUMBER',
+	'FLOAT',
+	'VARCHAR2',
+	'VARCHAR',
+	'CHAR',
+	'NVARCHAR2',
+	'NCHAR2',
+	'NCHAR',
+	'DATE',
+	'RAW',
+	'LONG',
+	'LONG RAW')
+	and data_type not like 'TIMESTAMP%'
+	order by d.owner,d.table_name,c.column_name;
+	spool off
+	exit
 "@
-$FLASHBACK_SCN = $sqlQueryExclude | sqlplus -silent system/oracle@$source_tns 
-(gc exclude_cols.txt) | ? {$_.trim() -ne "" } | set-content exclude_cols.txt
-$excludeFile = Get-Item ".\exclude_cols.txt"
-$content = [System.IO.File]::ReadAllText($excludeFile.FullName)
-$content = $content.Trim()
-[System.IO.File]::WriteAllText("exclude_cols.txt", $content)
-if (!((gc .\exclude_cols.txt) -eq $null))
+
+	$FLASHBACK_SCN = $sqlQueryExclude | sqlplus -silent system/oracle@$source_tns 
+	(gc exclude_cols.txt) | ? {$_.trim() -ne "" } | set-content exclude_cols.txt
+	$excludeFile = Get-Item ".\exclude_cols.txt"
+	$content = [System.IO.File]::ReadAllText($excludeFile.FullName)
+	$content = $content.Trim()
+	[System.IO.File]::WriteAllText("exclude_cols.txt", $content)
+
+	if (!((gc .\exclude_cols.txt) -eq $null)) {
+		$lastStart = $true
+	}
+
+}
+
+##################################################################
+# jaky je status mine a apply procesu?
+##################################################################
+
+if ($lastStart)
 {
+	Write-Host "Restarting MINE & APPLY process"
 	& $dbvrepexe --ddcfile $ddcFile read exclude_cols.txt
 	& $dbvrepexe --ddcfile $ddcFile shutdown MINE
 	& $dbvrepexe --ddcfile $ddcFile shutdown APPLY
@@ -669,18 +836,23 @@ if (!((gc .\exclude_cols.txt) -eq $null))
 	}
 }
 
+
 if ($refresh) {
 
 	Write-Host
 	Write-Host *****************************************************
 	Write-Host The refresh is done. Dbvisit replication is back. 
 	Write-Host *****************************************************
+	Write-Host
+	Write-Host
 }
 else {
 	Write-Host
 	Write-Host *****************************************************
 	Write-Host Tables were added to replication 
 	Write-Host *****************************************************   
+	Write-Host
+	Write-Host
 }
 
 exit
