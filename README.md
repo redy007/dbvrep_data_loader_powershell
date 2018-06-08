@@ -15,9 +15,9 @@ Before you'll use the script for first time you must have created replication an
 
 
 RUN The script within MINE or APPLY process:
-   . C:\Users\Administrator\Desktop\replicate_refresh.ps1 -sql_server_id sa -sql_server_passwd sa -system_password oracle -refresh 
-   . C:\Users\Administrator\Desktop\replicate_refresh.ps1 -sql_server_id sa -sql_server_passwd sa -system_password oracle -external_import
-   . C:\Users\Administrator\Desktop\replicate_refresh.ps1 -sql_server_id sa -sql_server_passwd sa -system_password oracle -refresh -prepare_tabs prepare_tabs.txt
+<br />. C:\Users\Administrator\Desktop\replicate_refresh.ps1 -sql_server_id sa -sql_server_passwd sa -system_password oracle -refresh 
+<br />. C:\Users\Administrator\Desktop\replicate_refresh.ps1 -sql_server_id sa -sql_server_passwd sa -system_password oracle -external_import
+<br />. C:\Users\Administrator\Desktop\replicate_refresh.ps1 -sql_server_id sa -sql_server_passwd sa -system_password oracle -refresh -prepare_tabs prepare_tabs.txt
 
 
 
