@@ -51,18 +51,22 @@
   are excluded automatically and these data aren't loaded either. You can choose to use SSMA or any different 
   tool by using variable external_import. Indexes and constraints are created too.
 
+  version 3.1
+
+  Version 3.1 supports suport Linux as source. However, user must start services manually.
+
 
 .EXAMPLE
 RUN The script from MINE process:
-   . C:\Users\Administrator\Desktop\replicate_refresh.ps1 -rename_schema msi.dbo -sql_server_id sa -sql_server_passwd sa -system_password oracle -refresh 
-   . C:\Users\Administrator\Desktop\replicate_refresh.ps1 -rename_schema msi.dbo -sql_server_id sa -sql_server_passwd sa -system_password oracle -external_import
-   . C:\Users\Administrator\Desktop\replicate_refresh.ps1 -rename_schema msi.dbo -sql_server_id sa -sql_server_passwd sa -system_password oracle -refresh -prepare_tabs prepare_tabs.txt
+   . C:\Users\Administrator\Desktop\replicate_refresh.ps1 -sql_server_id sa -sql_server_passwd sa -system_password oracle -refresh 
+   . C:\Users\Administrator\Desktop\replicate_refresh.ps1 -sql_server_id sa -sql_server_passwd sa -system_password oracle -external_import
+   . C:\Users\Administrator\Desktop\replicate_refresh.ps1 -sql_server_id sa -sql_server_passwd sa -system_password oracle -refresh -prepare_tabs prepare_tabs.txt
 
 
 #>
 
 param (
-    [string]$rename_schema = $( Read-Host "Rename SCHEMA name: [w420g.dbo]" ),
+#    [string]$rename_schema = $( Read-Host "Rename SCHEMA name: [w420g.dbo]" ),
 #    [string]$ComputerName = $env:computername,    
 	[string]$sql_server_id = $( Read-Host "User ID for SQL Server connection [dbvrep variable APPLY.APPLY_USER (default SA user)]" ),
     [string]$sql_server_passwd = $(Read-Host -asSecureString "Password for SQL Server connection [dbvrep variable APPLY.APPLY_USER (default SA user)]"),
@@ -75,7 +79,7 @@ param (
 
 Start-Transcript
 
-function stopDbvrepServices($s, $adress)    
+function stopDbvrepServices($s, $adress, $os)    
 {
 	cd $adress  
 	$tempvar= wmic service $s.name get PathName
@@ -143,7 +147,9 @@ function stopDbvrepServices($s, $adress)
 		$t= $target -split ' '
 		$t_servername=$t[2] | %{$_.Substring(0, $_.length - 5) }
 
-		(Get-Service -ComputerName $t_servername -Name $s.Name.Replace('APPLY','MINE')).start()
+		if ($os.equals('Windows')) {
+			(Get-Service -ComputerName $t_servername -Name $s.Name.Replace('APPLY','MINE')).start()
+		}		
 		(Get-Service -Name $s.Name).start()
 
 		Start-Sleep -Seconds 10
@@ -151,9 +157,15 @@ function stopDbvrepServices($s, $adress)
 				Write-Warning "start the APPLY service manually on this server."
 				cmd /c pause | out-null
 			}
-			if (Get-Service -ComputerName $t_servername -Name $s.Name.Replace('MINE','APPLY')| Where-Object {$_.Status -ne "Running"}) {
+			if ($os.equals('Linux')) {
 				Write-Warning "start the MINE service manually on server $t_servername."
 				cmd /c pause | out-null
+			} 
+			else {
+				if (Get-Service -ComputerName $t_servername -Name $s.Name.Replace('MINE','APPLY')| Where-Object {$_.Status -ne "Running"}) {
+					Write-Warning "start the MINE service manually on server $t_servername."
+					cmd /c pause | out-null
+				}
 			}
 	}
 
@@ -262,7 +274,7 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 		    $DATA_TYPE_SQL = "DECIMAL(38,18)"
 		} 
 		# stanovani precision pro string (budu muset vsechny vypsat)
-		elseif (($DATA_TYPE_SQL -eq "VARCHAR" -OR $DATA_TYPE_SQL -eq "CHAR" -OR $DATA_TYPE_SQL -eq "NCHAR" -OR $DATA_TYPE_SQL -eq "VARBINARY") -AND ($DATA_LENGTH[$I] -ne '0')) {
+		elseif (($DATA_TYPE_SQL -eq "VARCHAR" -OR $DATA_TYPE_SQL -eq "CHAR" -OR $DATA_TYPE_SQL -eq "NCHAR" -OR $DATA_TYPE_SQL -eq "NVARCHAR" -OR $DATA_TYPE_SQL -eq "VARBINARY") -AND ($DATA_LENGTH[$I] -ne '0')) {
 			$CURR_DATA_LENGTH = $DATA_LENGTH[$I];
 			$DATA_TYPE_SQL = $DATA_TYPE_SQL+"($CURR_DATA_LENGTH)"
 		}
@@ -299,7 +311,7 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 	#"ALTER TABLE $database.$schema.$table ADD PRIMARY KEY ($rows_pk);"  | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
 	$DDL.Add("ALTER TABLE $database.$schema.$table ADD PRIMARY KEY ($rows_pk);")
 	}
-
+	"" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
 	#ALTER TABLE $table ADD CONSTRAINT $statement_pk_CONSTRAINT_NAME PRIMARY KEY ($con_column_name );
 
 	$rows_uk = ""
@@ -329,8 +341,9 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 	"ALTER TABLE $database.$schema.$table ADD UNIQUE ($rows_uk);"  | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
 	$DDL.Add("ALTER TABLE $database.$schema.$table ADD UNIQUE ($rows_uk);")
 	}
+	"" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
 
-	$statement = "SELECT ui.COLUMN_NAME, ui.INDEX_NAME FROM all_ind_columns ui, all_constraints uc WHERE ui.table_name = uc.TABLE_NAME and ui.table_name = upper('$table') and uc.CONSTRAINT_TYPE not in ('P','U', 'C') and table_owner = upper('$oracle_schema') ORDER BY ui.index_name, ui.column_position"
+	$statement = "SELECT i.index_name, c.column_name FROM all_indexes i, all_ind_columns c WHERE i.table_name = upper('table') AND i.owner = upper('oracle_schema') AND i.uniqueness != 'UNIQUE' AND i.index_name = c.index_name AND i.table_owner = c.table_owner AND i.table_name = c.table_name AND i.owner = c.index_owner"
 	$index_name = $null
 	$rows_idx = ""
 
@@ -343,7 +356,8 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 		while ($result.Read()) {
 			if ($index_name -ne $result.GetString(1) -AND ($index_name -ne $null)) {	
 				$rows_idx = $rows_idx.trim(",", " ")
-				$DDL.Add("CREATE INDEX $index_name ON $table ($rows_idx);")
+				$DDL.Add("CREATE INDEX $index_name ON $database.$schema.$table ($rows_idx);")
+				"CREATE INDEX $index_name ON $database.$schema.$table ($rows_idx);" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
 				$index_name = $result.GetString(1)	
 				$rows_idx = ""
 				$rows_idx += ", " + $result.GetString(0)
@@ -357,6 +371,7 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 		"CREATE INDEX $index_name ON $database.$schema.$table ($rows_idx);" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
 		$DDL.Add("CREATE INDEX $index_name ON $database.$schema.$table ($rows_idx);")
 	}
+	"" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
 
 
 	$SQL_SERVER_DB = (Get-OdbcDsn -Name $dbvrep_db_apply).Attribute["Server"]
@@ -502,6 +517,7 @@ function createForeignKeys($username, $password, $data_source, $oracle_schema, $
 		$rTableName = $result.GetString(2)		
 		$rColName = $result.GetString(3)
 		$DDL.Add("ALTER TABLE $database.$schema.$table ADD CONSTRAINT $constraint_name FOREIGN KEY ($columnName) REFERENCES $database.$schema.$rTableName ($rColName)")
+		"ALTER TABLE $database.$schema.$table ADD CONSTRAINT $constraint_name FOREIGN KEY ($columnName) REFERENCES $database.$schema.$rTableName ($rColName)" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
 	}
 
 	$SQL_SERVER_DB = (Get-OdbcDsn -Name $dbvrep_db_apply).Attribute["Server"]
@@ -562,12 +578,27 @@ if (!(Test-Path $adress\$prepare_tabs)) {
 	Remove-Variable -Name LinesInFile
 }
 
-if ($refresh) {
-	stopDbvrepServices $s $adress
-}
-
 $ddcFile = Get-ChildItem -Filter *ddc
 $ddcFile = $ddcFile[0].Name
+
+$os = & $dbvrepexe --ddcfile $ddcFile show SETUP_SCRIPT_PATH| Select-String -Pattern ^MINE.SETUP_SCRIPT_PATH
+$os=($os -split(' '))[2]
+if ($os.contains("/")) {
+    $os = "Linux"
+}
+elseif ($os.contains("\")) {
+    $os = "Windows"
+}
+else {
+    write-host "Unkown OS."
+}
+
+
+if ($refresh) {
+	stopDbvrepServices $s $adress $os
+}
+
+
 & $dbvrepexe --ddcfile $ddcFile  pause MINE | Out-Null
 & $dbvrepexe --ddcfile $ddcFile  pause APPLY | Out-Null
 
@@ -579,24 +610,11 @@ else {
     New-Item -Name prepare_script.txt -ItemType File | Out-Null
 }
 
-if (!$rename_schema) {
-	Do {
-		$rename_schema = Read-Host "Rename SCHEMA name: [example w420g.dbo]"
-		} Until ($rename_schema.contains("."))
-}
-else {
-	if ($rename_schema.contains(".")) { }
-		### overeni jestli sedi promena obsahuje tecku
-	
-	else {
-		Write-Host 'SQL Server has database name and object owner inside The name. Add correct name.'
-		Do {
-			$rename_schema = Read-Host "Rename SCHEMA name: [example w420g.dbo]"
-			} Until ($rename_schema.contains("."))
-		    
-	}
+$APPLY_MSSQL_USER_DB = & $dbvrepexe --ddcfile $ddcFile show APPLY_MSSQL_USER_DB| Select-String -Pattern ^APPLY.APPLY_MSSQL_USER_DB
+$APPLY_MSSQL_USER_DB = ($APPLY_MSSQL_USER_DB -split(' '))[2]
 
-}
+$dbvrep_schema2_apply = & $dbvrepexe --ddcfile $ddcFile show APPLY.APPLY_DATABASE| Select-String -Pattern ^APPLY.APPLY_SCHEMA2
+$dbvrep_schema2_apply = ($dbvrep_schema2_apply -split(' '))[2]
 
 foreach($line in Get-Content .\$prepare_tabs) {
 	"engine lock tables $line" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
@@ -607,7 +625,7 @@ foreach($line in Get-Content .\$prepare_tabs) {
 
 foreach($line in Get-Content .\$prepare_tabs) {
 	$renameTo=$line.split('.')[1]
-	"prepare table $line rename to $rename_schema.$renameTo"  | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
+	"prepare table $line rename to $APPLY_MSSQL_USER_DB.$dbvrep_schema2_apply.$renameTo"  | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
 	#"prepare table $line" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
 }
 
@@ -615,30 +633,55 @@ foreach($line in Get-Content .\$prepare_tabs) {
 
 
 & $dbvrepexe --ddcfile $ddcFile read prepare_script.txt 2>&1|Out-File -Encoding ASCII -FilePath prepare_script_output.txt 
-$notPreparedTabs = @()
-$tabsToPrepare = @()
-$excludeTabsFilter = ""
-Get-Content prepare_script_output.txt |
-    ForEach-Object {
-        if($_ -match ('^' + [regex]::Escape('ERR-9219')))
-        {
-            $notPreparedTabs += ($_.split(' ')[8]) -Replace ".$"
-        }
-    }
 
+if ($refresh) {
+	$tabsToPrepare = @()
+	Get-Content prepare_tabs.txt |
+	    ForEach-Object {
+	            $tabsToPrepare += $_
+	    }
 
-Get-Content prepare_tabs.txt |
-    ForEach-Object {
-            $tabsToPrepare += $_
-    }
+	$tabsPrepared = @()
+	$checkArray = $false
+	$prepareArray= & $dbvrepexe --ddcfile $ddcFile --silent list prepare 
+	$prepareArray |
+	    ForEach-Object {
+		if ($checkArray) {
+	            $tabsPrepared += $_.split(' ')[0]
+		}
+		if ($_.contains("DBRSUSER")) {
+		    $checkArray = $true
+	        }
 
-$excludeTabsArray = $tabsToPrepare| ? {!($notPreparedTabs -contains $_)}
-""|Out-File -Encoding ASCII -FilePath prepare_script_output.txt 
-$excludeTabsArray |Out-File -Encoding ASCII -FilePath prepare_script_output.txt 
-foreach ($foo in $excludeTabsArray) {
-	$excludeTabsFilter += ", " + "`'" + $foo + "`'"
+	}
+	$tabsPrepared = $tabsPrepared[0..($tabsPrepared.Length-2)]
+	$excludeTabsArray = $tabsPrepared + $tabsToPrepare | select -uniq    #union
+
+} else {
+	$notPreparedTabs = @()
+	$tabsToPrepare = @()
+	$excludeTabsFilter = ""
+	Get-Content prepare_script_output.txt |
+	    ForEach-Object {
+	        if($_ -match ('^' + [regex]::Escape('ERR-9219')))
+	        {
+	            $notPreparedTabs += ($_.split(' ')[8]) -Replace ".$"
+	        }
+	    }
+
+	Get-Content prepare_tabs.txt |
+	    ForEach-Object {
+	            $tabsToPrepare += $_
+	    }
+
+	$excludeTabsArray = $tabsToPrepare| ? {!($notPreparedTabs -contains $_)}
+	""|Out-File -Encoding ASCII -FilePath prepare_script_output.txt 
+	$excludeTabsArray |Out-File -Encoding ASCII -FilePath prepare_script_output.txt 
+	foreach ($foo in $excludeTabsArray) {
+		$excludeTabsFilter += ", " + "`'" + $foo + "`'"
+	}
+	$excludeTabsFilter = $excludeTabsFilter.trim(",", " ")
 }
-$excludeTabsFilter = $excludeTabsFilter.trim(",", " ")
 # WARN-9015: Table already prepared on apply. To force the prepare again,
 # ERR-9219: Errors detected, will not prepare the table MSI.TEST_1.
 # musim precist log a reagovat na tuhle chybu
@@ -670,9 +713,6 @@ $SCHEMA=(Get-Content .\$prepare_tabs -head 1).split(".")[0].ToUpper()
 $dbvrep_schema_apply = & $dbvrepexe --ddcfile $ddcFile show APPLY.APPLY_DATABASE| Select-String -Pattern ^APPLY.APPLY_SCHEMA
 $dbvrep_schema_apply_tmp=$dbvrep_schema_apply[0]
 $dbvrep_schema_apply=($dbvrep_schema_apply_tmp -split(' '))[2]
-
-$dbvrep_schema2_apply = & $dbvrepexe --ddcfile $ddcFile show APPLY.APPLY_DATABASE| Select-String -Pattern ^APPLY.APPLY_SCHEMA2
-$dbvrep_schema2_apply=($dbvrep_schema2_apply -split(' '))[2]
 
 $sqlQuery = @"
 SET NOCOUNT ON
@@ -717,8 +757,7 @@ cmd /c pause | out-null
 		$oracle_schema = $line.split('.')[0]
 		# "prepare table $line rename to $rename_schema.$renameTo"  | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
 		# function loadTheTable($username, $password, $data_source, $table, $database, $schema, $dbvrep_db_apply, $FLASHBACK_SCN) 
-		loadTheTable "SYSTEM" $system_password $source_tns $oracle_schema $renameTo $rename_schema.split('.')[0] $rename_schema.split('.')[1] $dbvrep_db_apply $FLASHBACK_SCN $dbvrep_user_apply $sql_server_passwd 
-		# $line je blbost, protoze to je cela radka -> tudiz predelat
+		loadTheTable "SYSTEM" $system_password $source_tns $oracle_schema $renameTo $APPLY_MSSQL_USER_DB $dbvrep_schema2_apply $dbvrep_db_apply $FLASHBACK_SCN $dbvrep_user_apply $sql_server_passwd 
 
 		# $username, $password, $data_source, $table, $database, $schema, $dbvrep_db_apply, $FLASHBACK_SCN) 
 		# potrebuji
@@ -747,7 +786,7 @@ cmd /c pause | out-null
 
 	Write-Host "Creating FOREIGN constraints"
 	For ($M=0;$M -lt $foreignKeyTab.count;$M++) {
-		createForeignKeys "SYSTEM" $system_password $source_tns $foreignKeySchema[$M] $foreignKeyTab[$M] $rename_schema.split('.')[0] $rename_schema.split('.')[1] $dbvrep_db_apply $FLASHBACK_SCN $dbvrep_user_apply $sql_server_passwd
+		createForeignKeys "SYSTEM" $system_password $source_tns $foreignKeySchema[$M] $foreignKeyTab[$M] $APPLY_MSSQL_USER_DB $dbvrep_schema2_apply $dbvrep_db_apply $FLASHBACK_SCN $dbvrep_user_apply $sql_server_passwd
 	}
 }
 
@@ -800,6 +839,7 @@ foreach($line in $excludeTabsArray) {
 	[System.IO.File]::WriteAllText("exclude_cols.txt", $content)
 
 	if (!((gc .\exclude_cols.txt) -eq $null)) {
+		& $dbvrepexe --ddcfile $ddcFile read exclude_cols.txt
 		$lastStart = $true
 	}
 
@@ -812,7 +852,6 @@ foreach($line in $excludeTabsArray) {
 if ($lastStart)
 {
 	Write-Host "Restarting MINE & APPLY process"
-	& $dbvrepexe --ddcfile $ddcFile read exclude_cols.txt
 	& $dbvrepexe --ddcfile $ddcFile shutdown MINE
 	& $dbvrepexe --ddcfile $ddcFile shutdown APPLY
 	Start-Sleep -Seconds 10
@@ -825,14 +864,43 @@ if ($lastStart)
 
 		(Get-Service -ComputerName $t_servername -Name $s.Name.Replace('MINE','APPLY')).start()
 		(Get-Service -Name $s.Name).start()
+
+		Start-Sleep -Seconds 10
+		if (Get-Service -Name $s.Name| Where-Object {$_.Status -ne "Running"}) {
+			Write-Host "start the MINE service manually on this server."
+			cmd /c pause | out-null
+		}
+		if (Get-Service -ComputerName $t_servername -Name $s.Name.Replace('MINE','APPLY')| Where-Object {$_.Status -ne "Running"}) {
+			Write-Host "start the APPLY service manually on server $t_servername."
+			cmd /c pause | out-null
+		}
+
 	} else {
 		# it's the apply server where script is started
 		$target= & $dbvrepexe --ddcfile $ddcFile show MINE_REMOTE_INTERFACE| Select-String -Pattern ^MINE
 		$t= $target -split ' '
 		$t_servername=$t[2] | %{$_.Substring(0, $_.length - 5) }
 
-		(Get-Service -ComputerName $t_servername -Name $s.Name.Replace('APPLY','MINE')).start()
+		if ($os.equals('Windows')) {
+			(Get-Service -ComputerName $t_servername -Name $s.Name.Replace('APPLY','MINE')).start()
+		}		
 		(Get-Service -Name $s.Name).start()
+
+		Start-Sleep -Seconds 10
+			if (Get-Service -Name $s.Name| Where-Object {$_.Status -ne "Running"}) {
+				Write-Warning "start the APPLY service manually on this server."
+				cmd /c pause | out-null
+			}
+			if ($os.equals('Linux')) {
+				Write-Warning "start the MINE service manually on server $t_servername."
+				cmd /c pause | out-null
+			} 
+			else {
+				if (Get-Service -ComputerName $t_servername -Name $s.Name.Replace('MINE','APPLY')| Where-Object {$_.Status -ne "Running"}) {
+					Write-Warning "start the MINE service manually on server $t_servername."
+					cmd /c pause | out-null
+				}
+			}
 	}
 }
 
