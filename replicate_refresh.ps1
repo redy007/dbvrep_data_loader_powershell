@@ -294,9 +294,17 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 	$DDL.Add(");")
 	$SELECT_COLUMNS_NAME = $SELECT_COLUMNS_NAME.trim(",", " ")
 
-	"" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
+
+
+
+
+
+
+
+
+	#"" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
 	$rows_pk = ""
-	$statement = "select COLUMN_NAME from ALL_CONS_COLUMNS where CONSTRAINT_NAME = (select CONSTRAINT_NAME from ALL_CONSTRAINTS where CONSTRAINT_TYPE = 'P' and OWNER = upper('$oracle_schema') and TABLE_NAME= upper('$table')) order by POSITION"
+	$statement = "select COLUMN_NAME from ALL_CONS_COLUMNS cols, ALL_CONSTRAINTS cons where cols.CONSTRAINT_NAME = cons.CONSTRAINT_NAME and cols.OWNER = cons.INDEX_OWNER and cons.CONSTRAINT_TYPE = 'P' and cons.OWNER = upper('$oracle_schema') and cons.TABLE_NAME = upper('$table') order by cols.POSITION"
 
 	$con = New-Object System.Data.OracleClient.OracleConnection($connection_string)
 	$con.Open()
@@ -308,15 +316,15 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 	}
 	if ($result.HasRows) {
 	$rows_pk = $rows_pk.trim(",", " ")
-	#"ALTER TABLE $database.$schema.$table ADD PRIMARY KEY ($rows_pk);"  | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
+	"ALTER TABLE $database.$schema.$table ADD PRIMARY KEY ($rows_pk);"  | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
 	$DDL.Add("ALTER TABLE $database.$schema.$table ADD PRIMARY KEY ($rows_pk);")
 	}
-	"" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
+	#"" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
 	#ALTER TABLE $table ADD CONSTRAINT $statement_pk_CONSTRAINT_NAME PRIMARY KEY ($con_column_name );
 
 	$rows_uk = ""
 	$constraint_name = $null
-	$statement = "select COLUMN_NAME,CONSTRAINT_NAME from ALL_CONS_COLUMNS where CONSTRAINT_NAME = (select CONSTRAINT_NAME from ALL_CONSTRAINTS where CONSTRAINT_TYPE = 'U' and OWNER = upper('$oracle_schema') and TABLE_NAME= upper('$table')) order by CONSTRAINT_NAME, POSITION"
+	$statement = "select COLUMN_NAME from ALL_CONS_COLUMNS cols, ALL_CONSTRAINTS cons where cols.CONSTRAINT_NAME = cons.CONSTRAINT_NAME and cols.OWNER = cons.INDEX_OWNER and cons.CONSTRAINT_TYPE = 'U' and cons.OWNER = upper('$oracle_schema') and cons.TABLE_NAME = upper('$table') order by cols.POSITION"
 
 	$con = New-Object System.Data.OracleClient.OracleConnection($connection_string)
 	$con.Open()
@@ -341,7 +349,7 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 	"ALTER TABLE $database.$schema.$table ADD UNIQUE ($rows_uk);"  | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
 	$DDL.Add("ALTER TABLE $database.$schema.$table ADD UNIQUE ($rows_uk);")
 	}
-	"" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
+	#"" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
 
 	$statement = "SELECT i.index_name, c.column_name FROM all_indexes i, all_ind_columns c WHERE i.table_name = upper('table') AND i.owner = upper('oracle_schema') AND i.uniqueness != 'UNIQUE' AND i.index_name = c.index_name AND i.table_owner = c.table_owner AND i.table_name = c.table_name AND i.owner = c.index_owner"
 	$index_name = $null
@@ -371,12 +379,12 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 		"CREATE INDEX $index_name ON $database.$schema.$table ($rows_idx);" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
 		$DDL.Add("CREATE INDEX $index_name ON $database.$schema.$table ($rows_idx);")
 	}
-	"" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
+	#"" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
 
 
 	$SQL_SERVER_DB = (Get-OdbcDsn -Name $dbvrep_db_apply).Attribute["Server"]
-	$sqlconn = "server=$SQL_SERVER_DB;database=$database;uid=$dbvrep_user_apply;pwd=$sql_server_passwd;"
-	$sqlconn = new-object system.data.sqlclient.SqlConnection($sqlconn);
+	$sqlTns = "server=$SQL_SERVER_DB;database=$database;uid=$dbvrep_user_apply;pwd=$sql_server_passwd;"
+	$sqlconn = new-object system.data.sqlclient.SqlConnection($sqlTns);
 	$sqlconn.Open();
 	$cmd = New-object System.Data.SqlClient.SqlCommand;
 	$cmd.Connection = $sqlconn;
@@ -389,6 +397,9 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 			Write-Host "TRUNCATE TABLE: " $database "." $schema "." $table
 			$cmd.ExecuteNonQuery();
 		}
+		if ( $_.Exception.Number -eq "8111" ) {
+			Write-Host "different error: " $_.Exception.ToString()
+		}
 		else {
 			Write-Host "different error: " $_.Exception.ToString()
 		}
@@ -396,6 +407,9 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 	    Write-Error ("Database Exception: {0}`n{1}" -f `
 	        $con.ConnectionString, $_.Exception.ToString())
 	} 
+	#} #Finally{
+    #if ($con.State -eq ‘Open’) { $con.close() }
+   	#}
 
 
 	$newType = 'namespace System.Data.SqlClient
@@ -530,8 +544,20 @@ function createForeignKeys($username, $password, $data_source, $oracle_schema, $
 	try {
 		$rows = $cmd.ExecuteNonQuery();
 	} catch {
-	    Write-Error ("Database Exception: {0}`n{1}" -f `
-	        $con.ConnectionString, $_.Exception.ToString())
+	    #Write-Error ("Database Exception: {0}`n{1}" -f `
+	    #    $con.ConnectionString, $_.Exception.ToString())
+		#######################################################################
+		#######################################################################
+		#######################################################################
+		#######################################################################
+		#######################################################################
+	    $cmd.CommandText = $DDL
+	    #######################################################################
+		#######################################################################
+		#######################################################################
+		#######################################################################
+		#######################################################################
+
 	} 
 
 }
