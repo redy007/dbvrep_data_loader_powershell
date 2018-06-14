@@ -206,8 +206,6 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 	# sql server list of data types arraylist
 	$sqlDataType = 'DECIMAL','DECIMAL','NVARCHAR','VARCHAR','VARCHAR','CHAR','NCHAR','DATETIME','VARBINARY','TEXT','VARBINARY(MAX)','x','x','x','x','x','x','DATETIME2','x','x','x','x'
 
-	# NVL dat na 40 treba, aby se nula nepletla s opravdovou nulou
-	# predelta vsechny if pod timto
 	$statement = "select COLUMN_NAME, DATA_TYPE, DECODE(NULLABLE,'N', 'NOT NULL', 'Y', ' '), NVL(DATA_PRECISION, 0), NVL(DATA_SCALE, 0), NVL(DATA_LENGTH, 0) from ALL_TAB_COLS where TABLE_NAME = upper('$table') and OWNER = upper('$oracle_schema') order by COLUMN_ID"
 	$col_name = $null
 	$dtype = $null
@@ -235,7 +233,6 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 	    $cmd = $con.CreateCommand()
 	    $cmd.CommandText = $statement
 	    $result = $cmd.ExecuteReader()
-	    #print do souboru
 	    while ($result.Read()) {
 	    	#$result.FieldCount
 	    	$col_name += $result.GetString(0)
@@ -293,14 +290,6 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 	');' | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
 	$DDL.Add(");")
 	$SELECT_COLUMNS_NAME = $SELECT_COLUMNS_NAME.trim(",", " ")
-
-
-
-
-
-
-
-
 
 	#"" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt 
 	$rows_pk = ""
@@ -486,15 +475,10 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 	    $con = New-Object System.Data.OracleClient.OracleConnection($connection_string)
 
 	    $con.Open()
-	    #$adapter = new-object Oracle.ManagedDataAccess.Client.OracleDataAdapter($statement, $connection_string);
-	    #$dtbl = new-object System.Data.DataTable('tblTest');
-	    #$adapter.Fill($dtbl);
 	    $cmd = $con.CreateCommand()
 	    $cmd.CommandText = $statement
 
 	    $result = $cmd.ExecuteReader()
-	    # Do something with the results...
-	    # Write-Host $result
 
 	} catch [System.Data.SqlClient.SqlException] {
 		Write-Host $_.Exception.Number
@@ -537,8 +521,6 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 		$ddcFile = Get-ChildItem -Filter *ddc
 		$ddcFile = $ddcFile[0].Name
 		& $dbvrepexe --ddcfile $ddcFile unprepare table $oracle_schema"."$table  | Out-Null
-
-		#Write-Host	$oracle_schema "." $table
 
 	} catch {
 	    Write-Error ("Database Exception: {0}`n{1}" -f `
@@ -740,11 +722,6 @@ if ($refresh) {
 	}
 	$excludeTabsFilter = $excludeTabsFilter.trim(",", " ")
 }
-# WARN-9015: Table already prepared on apply. To force the prepare again,
-# ERR-9219: Errors detected, will not prepare the table MSI.TEST_1.
-# musim precist log a reagovat na tuhle chybu
-# kdyby nahodou byly exclude columns v tabulkach, co nebyly prepared, tak se musi vyradit taky
-# pri pridavani tabulek do sql serveru musim tuhle kontrolu provest taky 
 
 $dbvrep_db_apply = & $dbvrepexe --ddcfile $ddcFile show APPLY.APPLY_DATABASE| Select-String -Pattern ^APPLY.APPLY_DATABASE
 $dbvrep_db_apply_tmp=$dbvrep_db_apply[0]
@@ -804,26 +781,15 @@ cmd /c pause | out-null
 	$systemName = "SYSTEM"
 	$connection_string = "User Id=$systemName;Password=$system_password;Data Source=$source_tns"
 
-	# vytvorit pole se vsemi replikovanymi tabulkami
 	$preparedTabsArray = & $dbvrepexe --ddcfile $ddcFile --silent list prepare 
-	#$preparedTabsArray = $preparedTabsArray[7..($list.Length-2)]
 
 	Write-Host "Creating tables and loading data to SQL Server"
 	
 	foreach($line in $excludeTabsArray) {
 		$renameTo = $line.split('.')[1]
 		$oracle_schema = $line.split('.')[0]
-		# "prepare table $line rename to $rename_schema.$renameTo"  | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
-		# function loadTheTable($username, $password, $data_source, $table, $database, $schema, $dbvrep_db_apply, $FLASHBACK_SCN) 
-		loadTheTable "SYSTEM" $system_password $source_tns $oracle_schema $renameTo $APPLY_MSSQL_USER_DB $dbvrep_schema2_apply $dbvrep_db_apply $FLASHBACK_SCN $dbvrep_user_apply $sql_server_passwd 
 
-		# $username, $password, $data_source, $table, $database, $schema, $dbvrep_db_apply, $FLASHBACK_SCN) 
-		# potrebuji
-		#oracle: jmeno_systemu heslo tns_names ok
-		#oracle: schema a jmeno tabulky
-		#sql_server: jmeno_db jmeno_schematu jmeno_tabulky
-		#DSN_name
-		#FLASHBACK_SCN
+		loadTheTable "SYSTEM" $system_password $source_tns $oracle_schema $renameTo $APPLY_MSSQL_USER_DB $dbvrep_schema2_apply $dbvrep_db_apply $FLASHBACK_SCN $dbvrep_user_apply $sql_server_passwd 
 		
 		$statement = "select d.owner, d.table_name from all_constraints d, all_constraints b where d.constraint_name=b.r_constraint_name and b.table_name=upper('$renameTo') and b.owner=upper('$oracle_schema') and b.constraint_type='R'"
 		$con = New-Object System.Data.OracleClient.OracleConnection($connection_string)
@@ -902,10 +868,6 @@ foreach($line in $excludeTabsArray) {
 	}
 
 }
-
-##################################################################
-# jaky je status mine a apply procesu?
-##################################################################
 
 if ($lastStart)
 {
