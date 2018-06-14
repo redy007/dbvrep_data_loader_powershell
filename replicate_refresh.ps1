@@ -398,7 +398,51 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 			$cmd.ExecuteNonQuery();
 		}
 		if ( $_.Exception.Number -eq "8111" ) {
-			Write-Host "different error: " $_.Exception.ToString()
+			$rows_pk = ""
+			$statement = "select COLUMN_NAME from ALL_CONS_COLUMNS cols, ALL_CONSTRAINTS cons where cols.CONSTRAINT_NAME = cons.CONSTRAINT_NAME and cols.OWNER = cons.INDEX_OWNER and cons.CONSTRAINT_TYPE = 'P' and cons.OWNER = upper('$oracle_schema') and cons.TABLE_NAME = upper('$table') order by cols.POSITION"
+
+			$conORCL = New-Object System.Data.OracleClient.OracleConnection($connection_string)
+			$conORCL.Open()
+			$orcl = $conORCL.CreateCommand()
+			$orcl.CommandText = $statement
+			$orclResult = $orcl.ExecuteReader()
+			while ($orclResult.Read()) {
+				$rows_pk = $orclResult.GetString(0)
+				$sqlDataType = new-object system.data.sqlclient.SqlConnection($sqlTns);
+				$sqlDataType.Open();
+				$cmdDataType = New-object System.Data.SqlClient.SqlCommand;
+				$cmdDataType.Connection = $sqlDataType;
+				$cmdDataType.CommandText = "SELECT DATA_TYPE, ISNULL(character_maximum_length, 9999999), ISNULL(NUMERIC_PRECISION, 255), ISNULL(NUMERIC_SCALE, 255) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '$table' AND COLUMN_NAME = '$rows_pk'"
+				$rdr = $cmdDataType.ExecuteReader();
+				while ($rdr.Read()) {
+                        $sqlServerDataType = $rdr.GetString(0)
+                        $characterLength = $rdr.GetValue(1)
+                        $NumericPrecision = $rdr.GetValue(2)
+                        $NumericScale = $rdr.GetValue(3)
+                        $sqlAlter = new-object system.data.sqlclient.SqlConnection($sqlTns);
+						$sqlAlter.Open();
+						$cmdAlter = New-object System.Data.SqlClient.SqlCommand;
+						$cmdAlter.Connection = $sqlAlter;
+						if ($characterLength -eq 9999999) {
+							$cmdAlter.CommandText = "ALTER TABLE $database.$schema.$table ALTER COLUMN $rows_pk $sqlServerDataType($NumericPrecision, $NumericScale) NOT NULL"
+						}
+						else {
+							$cmdAlter.CommandText = "ALTER TABLE $database.$schema.$table ALTER COLUMN $rows_pk $sqlServerDataType($characterLength) NOT NULL"
+						}
+                        
+                        $rows = $cmdAlter.ExecuteNonQuery();
+                }
+                $rowsPkMulti += ", " + $orclResult.GetString(0)	
+                $sqlDataType.close();		
+			}
+			$rowsPkMulti = $rowsPkMulti.trim(",", " ")
+			$sqlconn.Close();
+			$sqlconn.Open();
+			$cmd = New-object System.Data.SqlClient.SqlCommand;
+			$cmd.Connection = $sqlconn;
+			Write-Host "ALTER TABLE $database.$schema.$table ADD PRIMARY KEY ($rowsPkMulti)"
+			$cmd.CommandText = "ALTER TABLE $database.$schema.$table ADD PRIMARY KEY ($rowsPkMulti)"
+			$rows = $cmd.ExecuteNonQuery();
 		}
 		else {
 			Write-Host "different error: " $_.Exception.ToString()
