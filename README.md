@@ -14,10 +14,31 @@ Before you'll use the script for first time you must have created replication an
 
 
 
-RUN The script within MINE or APPLY process:
--. C:\Users\Administrator\Desktop\replicate_refresh.ps1 -sql_server_id sa -sql_server_passwd sa -system_password oracle -refresh 
--. C:\Users\Administrator\Desktop\replicate_refresh.ps1 -sql_server_id sa -sql_server_passwd sa -system_password oracle -external_import
--. C:\Users\Administrator\Desktop\replicate_refresh.ps1 -sql_server_id sa -sql_server_passwd sa -system_password oracle -refresh -prepare_tabs prepare_tabs.txt
+RUN The script within MINE or APPLY process example:
+- C:\Users\Administrator\Desktop\replicate_refresh.ps1 -sql_server_id sa -sql_server_passwd sa -system_password oracle -refresh 
+- C:\Users\Administrator\Desktop\replicate_refresh.ps1 -sql_server_id sa -sql_server_passwd sa -system_password oracle -external_import
+- C:\Users\Administrator\Desktop\replicate_refresh.ps1 -sql_server_id sa -sql_server_passwd sa -system_password oracle -refresh -prepare_tabs prepare_tabs.txt
 
+sql_server_id = SQL Server admin
+sql_server_passwd = SQL Server admin password
+system_password = SYSTEM's password
 
+refresh - Do you want start from scratch
+external_import - Do you want use 3rd party tool to load data to SQL Server
+prepare_tabs - Where are stored table to use by DBVisit Replicate
 
+prepare_tabs content example:
+=================================
+SOE.CUSTOMERS
+SOE.ADDRESSES
+SOE.CARD_DETAILS
+SOE.WAREHOUSES
+SOE.ORDER_ITEMS
+SOE.ORDERS
+SOE.INVENTORIES
+SOE.PRODUCT_INFORMATION
+SOE.LOGON
+SOE.PRODUCT_DESCRIPTIONS
+SOE.ORDERENTRY_METADATA
+SOE.DBVISITTEST
+SOE.DBVISITTEST2
