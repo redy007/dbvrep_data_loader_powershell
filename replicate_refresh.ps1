@@ -574,8 +574,7 @@ function createForeignKeys($username, $password, $data_source, $oracle_schema, $
 		$columnName = $result.GetString(1)
 		$rTableName = $result.GetString(2)		
 		$rColName = $result.GetString(3)
-		$DDL.Add("ALTER TABLE $database.$schema.$table ADD CONSTRAINT $constraint_name FOREIGN KEY ($columnName) REFERENCES $database.$schema.$rTableName ($rColName)")
-		"ALTER TABLE $database.$schema.$table ADD CONSTRAINT $constraint_name FOREIGN KEY ($columnName) REFERENCES $database.$schema.$rTableName ($rColName)" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
+		$DDL.Add("ALTER TABLE $database.$schema.$table ADD CONSTRAINT $constraint_name FOREIGN KEY ($columnName) REFERENCES $database.$schema.$rTableName ($rColName)")		
 	}
 
 	$SQL_SERVER_DB = (Get-OdbcDsn -Name $dbvrep_db_apply).Attribute["Server"]
@@ -587,21 +586,10 @@ function createForeignKeys($username, $password, $data_source, $oracle_schema, $
 	$cmd.CommandText = $DDL
 	try {
 		$rows = $cmd.ExecuteNonQuery();
+		"ALTER TABLE $database.$schema.$table ADD CONSTRAINT $constraint_name FOREIGN KEY ($columnName) REFERENCES $database.$schema.$rTableName ($rColName)" | Out-File -append -Encoding ASCII -FilePath prepare_script.txt
 	} catch {
 	    #Write-Error ("Database Exception: {0}`n{1}" -f `
-	    #    $con.ConnectionString, $_.Exception.ToString())
-		#######################################################################
-		#######################################################################
-		#######################################################################
-		#######################################################################
-		#######################################################################
 	    $cmd.CommandText = $DDL
-	    #######################################################################
-		#######################################################################
-		#######################################################################
-		#######################################################################
-		#######################################################################
-
 	} 
 
 }
