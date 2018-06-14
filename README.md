@@ -27,7 +27,7 @@ refresh - Do you want start from scratch
 external_import - Do you want use 3rd party tool to load data to SQL Server
 prepare_tabs - Where are stored table to use by DBVisit Replicate
 
-prepare_tabs content example:
+prepare_tabs.txt content example:
 =================================
 SOE.CUSTOMERS<br />
 SOE.ADDRESSES<br />
