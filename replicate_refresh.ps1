@@ -530,8 +530,10 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 		    Write-Host	$oracle_schema "." $table
 		    Write-Host $_.Exception.GetType().FullName 
 	}
-	#finally {
-	#} 
+	finally {
+		#Close Oracle session
+		if ($con.State -eq ‘Open’) { $con.close() }
+	} 
 }
 
 function createForeignKeys($username, $password, $data_source, $oracle_schema, $table, $database, $schema, $dbvrep_db_apply, $FLASHBACK_SCN, $dbvrep_user_apply, $sql_server_passwd)    
@@ -572,8 +574,11 @@ function createForeignKeys($username, $password, $data_source, $oracle_schema, $
 	} catch {
 	    #Write-Error ("Database Exception: {0}`n{1}" -f `
 	    $cmd.CommandText = $DDL
+	}
+	finally {
+		#Close Oracle session
+		if ($con.State -eq ‘Open’) { $con.close() }
 	} 
-
 }
 
 
@@ -855,7 +860,7 @@ foreach($line in $excludeTabsArray) {
 	exit
 "@
 
-	$FLASHBACK_SCN = $sqlQueryExclude | sqlplus -silent system/oracle@$source_tns 
+	$FLASHBACK_SCN = $sqlQueryExclude | sqlplus -silent system/$system_password@$source_tns 
 	(gc exclude_cols.txt) | ? {$_.trim() -ne "" } | set-content exclude_cols.txt
 	$excludeFile = Get-Item ".\exclude_cols.txt"
 	$content = [System.IO.File]::ReadAllText($excludeFile.FullName)
@@ -923,6 +928,9 @@ if ($lastStart)
 			}
 	}
 }
+
+Remove-Item prepare_script_output.txt 
+Remove-Item prepare_script.txt
 
 
 if ($refresh) {
