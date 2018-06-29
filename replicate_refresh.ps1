@@ -254,7 +254,10 @@ function loadTheTable($username, $password, $data_source, $oracle_schema, $table
 	For ($I=0;$I -lt $col_name.count;$I++) {
 		$mapNumber = $oracleDataType.indexof($dtype[$I])
 		$DATA_TYPE_SQL = $sqlDataType[$mapNumber]
-		if ($DATA_TYPE_SQL -eq "DECIMAL" -AND $DATA_SCALE[$I] -eq '0') {
+		if ($col_name -like 'SYS_*') {
+			continue
+		}
+		elseif ($DATA_TYPE_SQL -eq "DECIMAL" -AND $DATA_SCALE[$I] -eq '0') {
 			if ($dtype[$I] -eq "FLOAT") {
 				$DATA_TYPE_SQL = "DECIMAL(38,18)"
 			}
